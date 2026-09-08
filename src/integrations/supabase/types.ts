@@ -14,7 +14,122 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      alerts: {
+        Row: {
+          authority_contact: string | null
+          authority_dept: string | null
+          authority_name: string
+          channel: string
+          created_at: string
+          id: string
+          message: string
+          report_id: string | null
+          status: string
+        }
+        Insert: {
+          authority_contact?: string | null
+          authority_dept?: string | null
+          authority_name: string
+          channel?: string
+          created_at?: string
+          id?: string
+          message: string
+          report_id?: string | null
+          status?: string
+        }
+        Update: {
+          authority_contact?: string | null
+          authority_dept?: string | null
+          authority_name?: string
+          channel?: string
+          created_at?: string
+          id?: string
+          message?: string
+          report_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alerts_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reports: {
+        Row: {
+          address: string | null
+          authority_contact: string | null
+          authority_dept: string | null
+          authority_name: string | null
+          city: string | null
+          confidence: number
+          created_at: string
+          hazard_type: string
+          id: string
+          image_path: string | null
+          items: Json
+          lat: number | null
+          lng: number | null
+          reporter_note: string | null
+          risk_score: number
+          road: string | null
+          severity: string
+          source: string
+          state: string | null
+          status: string
+          summary: string
+        }
+        Insert: {
+          address?: string | null
+          authority_contact?: string | null
+          authority_dept?: string | null
+          authority_name?: string | null
+          city?: string | null
+          confidence?: number
+          created_at?: string
+          hazard_type: string
+          id?: string
+          image_path?: string | null
+          items?: Json
+          lat?: number | null
+          lng?: number | null
+          reporter_note?: string | null
+          risk_score?: number
+          road?: string | null
+          severity?: string
+          source?: string
+          state?: string | null
+          status?: string
+          summary?: string
+        }
+        Update: {
+          address?: string | null
+          authority_contact?: string | null
+          authority_dept?: string | null
+          authority_name?: string | null
+          city?: string | null
+          confidence?: number
+          created_at?: string
+          hazard_type?: string
+          id?: string
+          image_path?: string | null
+          items?: Json
+          lat?: number | null
+          lng?: number | null
+          reporter_note?: string | null
+          risk_score?: number
+          road?: string | null
+          severity?: string
+          source?: string
+          state?: string | null
+          status?: string
+          summary?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
