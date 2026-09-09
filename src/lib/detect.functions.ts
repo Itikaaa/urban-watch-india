@@ -52,12 +52,12 @@ function safeJson(text: string): Detection | null {
       summary: String(raw.summary ?? ""),
       items: Array.isArray(raw.items)
         ? raw.items.map((i: Record<string, unknown>) => ({
-            type: String(i.type ?? "other"),
-            label: String(i.label ?? i.type ?? "hazard"),
-            count: Number(i.count ?? 1),
-            severity: Number(i.severity ?? 1),
-            confidence: Number(i.confidence ?? 0.5),
-            note: String(i.note ?? ""),
+            type: String(i["type"] ?? "other"),
+            label: String(i["label"] ?? i["type"] ?? "hazard"),
+            count: Number(i["count"] ?? 1),
+            severity: Number(i["severity"] ?? 1),
+            confidence: Number(i["confidence"] ?? 0.5),
+            note: String(i["note"] ?? ""),
           }))
         : [],
       locationGuess:
