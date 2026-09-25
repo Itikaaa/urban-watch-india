@@ -217,6 +217,7 @@ export const HAZARD_LABELS: Record<string, string> = {
   garbage: "Garbage",
   person: "Person",
   phone: "Phone",
+  vehicle: "Vehicle",
   debris: "Construction debris",
   open_manhole: "Open manhole / drain",
   broken_footpath: "Broken footpath",

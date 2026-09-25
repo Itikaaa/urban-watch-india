@@ -46,7 +46,7 @@ import { fetchReports, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
 import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
-import { countSights, type Sight } from "@/lib/sights";
+import { groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
 
 export const Route = createFileRoute("/")({
@@ -122,54 +122,30 @@ const ROAD_TYPES = new Set([
 ]);
 
 function sightsToDetection(sights: Sight[]): Detection {
-  const counts = countSights(sights);
-  const scoreOf = (kind: Sight["kind"]) => {
-    const matched = sights.filter((sight) => sight.kind === kind);
-    if (!matched.length) return 0;
-    return matched.reduce((sum, sight) => sum + sight.score, 0) / matched.length;
-  };
-  const items: DetectedItem[] = [];
-  if (counts.person) {
-    items.push({
-      type: "person",
-      label: "Person",
-      count: counts.person,
-      severity: 1,
-      confidence: scoreOf("person"),
+  const groups = groupSights(sights);
+  const items: DetectedItem[] = groups.map((group) => {
+    const matched = sights.filter(
+      (sight) => sight.kind === group.kind && sight.label === group.label,
+    );
+    const confidence = matched.reduce((sum, sight) => sum + sight.score, 0) / matched.length;
+    const type =
+      group.kind === "vehicle" ? "vehicle" : group.kind === "scene" ? "other" : group.kind;
+    return {
+      type,
+      label: group.label,
+      count: group.count,
+      severity: group.kind === "garbage" ? Math.min(5, 1 + Math.ceil(group.count / 2)) : 1,
+      confidence,
       note: "",
-    });
-  }
-  if (counts.phone) {
-    items.push({
-      type: "phone",
-      label: "Phone",
-      count: counts.phone,
-      severity: 1,
-      confidence: scoreOf("phone"),
-      note: "",
-    });
-  }
-  if (counts.garbage) {
-    items.push({
-      type: "garbage",
-      label: "Garbage",
-      count: counts.garbage,
-      severity: Math.min(5, 1 + Math.ceil(counts.garbage / 2)),
-      confidence: scoreOf("garbage"),
-      note: "",
-    });
-  }
-  const parts = [
-    counts.person ? `${counts.person} person` : "",
-    counts.phone ? `${counts.phone} phone` : "",
-    counts.garbage ? `${counts.garbage} garbage` : "",
-  ].filter(Boolean);
+    };
+  });
+  const garbage = sights.filter((sight) => sight.kind === "garbage").length;
   return {
-    hazardDetected: counts.garbage > 0,
-    primaryType: counts.garbage > 0 ? "garbage" : "other",
-    riskScore: counts.garbage === 0 ? 0 : Math.min(70, 15 + counts.garbage * 8),
+    hazardDetected: garbage > 0,
+    primaryType: garbage > 0 ? "garbage" : "other",
+    riskScore: garbage === 0 ? 0 : Math.min(70, 15 + garbage * 8),
     confidence: items.length ? Math.max(...items.map((item) => item.confidence)) : 0,
-    summary: parts.join(", "),
+    summary: groups.map((group) => `${group.count} ${group.label.toLowerCase()}`).join(", "),
     items,
     locationGuess: null,
   };
@@ -531,7 +507,7 @@ function Home() {
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
   const totalItems =
     detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
-  const liveCounts = countSights(sights);
+  const liveGroups = groupSights(sights);
 
   if (loading) {
     return (
@@ -601,17 +577,26 @@ function Home() {
                       ref={canvasRef}
                       className="pointer-events-none absolute inset-0 h-full w-full"
                     />
-                    {cameraOn && (
-                      <div className="absolute bottom-2 left-2 flex flex-wrap gap-1">
-                        <span className="rounded bg-black/75 px-2 py-0.5 text-xs text-sky-300">
-                          Person {liveCounts.person}
-                        </span>
-                        <span className="rounded bg-black/75 px-2 py-0.5 text-xs text-yellow-300">
-                          Phone {liveCounts.phone}
-                        </span>
-                        <span className="rounded bg-black/75 px-2 py-0.5 text-xs text-red-400">
-                          Garbage {liveCounts.garbage}
-                        </span>
+                    {cameraOn && liveGroups.length > 0 && (
+                      <div className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap gap-1">
+                        {liveGroups.map((group) => (
+                          <span
+                            key={`${group.kind}-${group.label}`}
+                            className={`rounded bg-black/75 px-2 py-0.5 text-xs ${
+                              group.kind === "person"
+                                ? "text-sky-300"
+                                : group.kind === "phone"
+                                  ? "text-yellow-300"
+                                  : group.kind === "vehicle"
+                                    ? "text-orange-300"
+                                    : group.kind === "garbage"
+                                      ? "text-red-400"
+                                      : "text-white"
+                            }`}
+                          >
+                            {group.label} {group.count}
+                          </span>
+                        ))}
                       </div>
                     )}
                     {cameraOn && detectorStatus === "loading" && (

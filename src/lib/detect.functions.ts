@@ -24,7 +24,7 @@ export type Detection = {
 
 const SYSTEM = `You look at one camera frame and name only what is visible.
 
-Label every person as type "person" and label "Person". Label every mobile phone as type "phone" and label "Phone". Label loose clutter — wrappers, bottles, cups, bags, paper, packets, and other discarded or out-of-place objects — as type "garbage" and label "Garbage". Never label a person, phone, vehicle, or animal as garbage.
+Label every person as type "person" and label "Person". Label every mobile phone as type "phone" and label "Phone". Label every vehicle by what it is: Car, Bus, Truck, Motorcycle, Bicycle, Train, Boat, or Airplane, with type "vehicle". Label other recognizable objects by their own name (Chair, Dog, Bag, and so on) with type "other". Label only loose clutter — wrappers, bottles, cups, food waste, packets, and discarded rubbish — as type "garbage" and label "Garbage". Never label a person, phone, vehicle, animal, or other recognizable object as garbage.
 
 Also list street hazards: potholes, damaged road, waterlogging, stagnant water, debris, open manholes, broken footpaths, traffic hazards.
 

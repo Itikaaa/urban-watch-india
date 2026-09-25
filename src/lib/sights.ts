@@ -1,4 +1,4 @@
-export type SightKind = "person" | "phone" | "garbage" | "scene";
+export type SightKind = "person" | "phone" | "vehicle" | "garbage" | "scene";
 
 export type Sight = {
   kind: SightKind;
@@ -7,14 +7,20 @@ export type Sight = {
   box: { x: number; y: number; w: number; h: number };
 };
 
+const VEHICLES = new Set([
+  "bicycle",
+  "car",
+  "motorcycle",
+  "airplane",
+  "aeroplane",
+  "bus",
+  "train",
+  "truck",
+  "boat",
+  "vehicle",
+]);
+
 const CLUTTER = new Set([
-  "backpack",
-  "umbrella",
-  "handbag",
-  "suitcase",
-  "frisbee",
-  "sports ball",
-  "kite",
   "bottle",
   "wine glass",
   "cup",
@@ -32,25 +38,20 @@ const CLUTTER = new Set([
   "pizza",
   "donut",
   "cake",
-  "book",
-  "vase",
-  "scissors",
-  "teddy bear",
-  "hair drier",
-  "toothbrush",
-  "remote",
 ]);
 
 function titleCase(value: string) {
   return value.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-/** Person and phone keep their names. Loose objects are clutter, reported as garbage. */
+/** Clutter is garbage. People, phones, vehicles, and other objects keep their own names. */
 export function classifySight(categoryName: string): { kind: SightKind; label: string } {
   const key = categoryName.trim().toLowerCase();
   if (key === "person") return { kind: "person", label: "Person" };
   if (key === "cell phone" || key === "phone" || key === "mobile phone")
     return { kind: "phone", label: "Phone" };
+  if (VEHICLES.has(key))
+    return { kind: "vehicle", label: titleCase(key === "aeroplane" ? "airplane" : key) };
   if (CLUTTER.has(key)) return { kind: "garbage", label: "Garbage" };
   return { kind: "scene", label: titleCase(key) };
 }
@@ -61,6 +62,8 @@ export function sightColor(kind: SightKind) {
       return "#38bdf8";
     case "phone":
       return "#facc15";
+    case "vehicle":
+      return "#fb923c";
     case "garbage":
       return "#ef4444";
     default:
@@ -88,10 +91,20 @@ export function containFrame(
   };
 }
 
-export function countSights(sights: Sight[]) {
-  return {
-    person: sights.filter((sight) => sight.kind === "person").length,
-    phone: sights.filter((sight) => sight.kind === "phone").length,
-    garbage: sights.filter((sight) => sight.kind === "garbage").length,
-  };
+export type SightGroup = { kind: SightKind; label: string; count: number };
+
+const GROUP_ORDER: SightKind[] = ["person", "phone", "vehicle", "garbage", "scene"];
+
+export function groupSights(sights: Sight[]): SightGroup[] {
+  const groups = new Map<string, SightGroup>();
+  for (const sight of sights) {
+    const key = `${sight.kind}:${sight.label}`;
+    const existing = groups.get(key);
+    if (existing) existing.count += 1;
+    else groups.set(key, { kind: sight.kind, label: sight.label, count: 1 });
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      GROUP_ORDER.indexOf(a.kind) - GROUP_ORDER.indexOf(b.kind) || a.label.localeCompare(b.label),
+  );
 }

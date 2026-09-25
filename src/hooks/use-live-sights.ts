@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { detectVideoFrame, drawSights, loadDetector } from "@/lib/object-detector";
-import type { Sight } from "@/lib/sights";
+import { groupSights, type Sight } from "@/lib/sights";
 
 export function useLiveSights(videoRef: RefObject<HTMLVideoElement | null>, active: boolean) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -43,7 +43,9 @@ export function useLiveSights(videoRef: RefObject<HTMLVideoElement | null>, acti
             const next = detectVideoFrame(video, lastTimestamp);
             sightsRef.current = next;
             if (!cancelled) {
-              const counts = `${next.filter((sight) => sight.kind === "person").length}|${next.filter((sight) => sight.kind === "phone").length}|${next.filter((sight) => sight.kind === "garbage").length}`;
+              const counts = groupSights(next)
+                .map((group) => `${group.label}:${group.count}`)
+                .join("|");
               if (counts !== lastCounts) {
                 lastCounts = counts;
                 setSights(next);
