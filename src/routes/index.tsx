@@ -33,6 +33,7 @@ import { readExifGps } from "@/lib/exif";
 import { HAZARD_LABELS, resolveAuthority, severityFromScore, type Authority } from "@/lib/authorities";
 import { fetchReports, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
+import { AuthCard, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -107,6 +108,7 @@ function mergeDetections(list: Detection[]): Detection {
 }
 
 function Home() {
+  const { user, loading, signOut } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("live");
   const [preview, setPreview] = useState<string | null>(null);
@@ -124,7 +126,11 @@ function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const { data: reports = [] } = useQuery({ queryKey: ["reports"], queryFn: () => fetchReports(200) });
+  const { data: reports = [] } = useQuery({
+    queryKey: ["reports"],
+    queryFn: () => fetchReports(200),
+    enabled: Boolean(user),
+  });
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -405,6 +411,14 @@ function Home() {
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
   const totalItems = detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
 
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Checking your sign-in…</div>;
+  }
+
+  if (!user) {
+    return <AuthCard />;
+  }
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border" style={{ background: "var(--gradient-hero)" }}>
@@ -420,6 +434,9 @@ function Home() {
                 <MapPin className="size-4" /> Live risk map
               </Button>
             </Link>
+            <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+              Sign out
+            </Button>
           </nav>
         </div>
         <div className="mx-auto max-w-6xl px-4 pb-10 pt-4">

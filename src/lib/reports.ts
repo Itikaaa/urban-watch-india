@@ -63,8 +63,10 @@ export async function signedImageUrl(path: string | null) {
 }
 
 export async function uploadHazardImage(dataUrl: string) {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) throw new Error("Sign in before saving a report photo.");
   const blob = await (await fetch(dataUrl)).blob();
-  const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+  const path = `${userData.user.id}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
   const { error } = await supabase.storage.from("hazard-media").upload(path, blob, {
     contentType: blob.type || "image/jpeg",
     upsert: false,
