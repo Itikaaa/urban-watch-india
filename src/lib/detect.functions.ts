@@ -22,16 +22,16 @@ export type Detection = {
   locationGuess: { text: string; confidence: number } | null;
 };
 
-const SYSTEM = `You are an urban hazard inspector for Indian streets. You look at a street image and list EVERY visible civic hazard, including very small ones.
+const SYSTEM = `You look at one camera frame and name only what is visible.
 
-Detect and count: potholes, cracked or damaged road surface, waterlogging or stagnant water, garbage piles, scattered litter (count individual small items such as wrappers, plastic bottles, cups, cigarette packets, polythene bags), overflowing bins, construction debris, open manholes or drains, broken footpaths, and any other traffic or public-safety risk.
+Label every person as type "person" and label "Person". Label every mobile phone as type "phone" and label "Phone". Label loose clutter — wrappers, bottles, cups, bags, paper, packets, and other discarded or out-of-place objects — as type "garbage" and label "Garbage". Never label a person, phone, vehicle, or animal as garbage.
 
-Be exhaustive about small litter: scan the whole frame including road edges, gutters, kerbs and background.
+Also list street hazards: potholes, damaged road, waterlogging, stagnant water, debris, open manholes, broken footpaths, traffic hazards.
 
-Return ONLY minified JSON, no markdown fence, in this exact shape:
-{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|other","riskScore":0-100,"confidence":0-1,"summary":"one or two sentences in plain English","items":[{"type":"...","label":"short human label","count":number,"severity":1-5,"confidence":0-1,"note":"where in the frame and how bad"}],"locationGuess":{"text":"place guessed from signboards, shop names, vehicle number plates or landmarks — include city/state if visible","confidence":0-1}}
+Return ONLY minified JSON:
+{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|person|phone|other","riskScore":0-100,"confidence":0-1,"summary":"short count of what is visible","items":[{"type":"...","label":"Person|Phone|Garbage or the hazard name","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":{"text":"place from signs or landmarks","confidence":0-1}}
 
-If nothing is visible, set hazardDetected false, riskScore 0 and items []. If no location clue is visible, set locationGuess null. riskScore must reflect danger to people: deep potholes on a busy road or an open manhole are 80+, heavy waterlogging 60-85, large garbage piles 45-70, scattered litter 15-35.`;
+hazardDetected is true only for a street hazard, including garbage. A person or phone alone is not a hazard: riskScore 0. Open manhole or deep pothole 80+, heavy water 60-85, large garbage 45-70, scattered clutter 15-35. If nothing is visible, hazardDetected false, riskScore 0, items []. If no place is visible, locationGuess null.`;
 
 function safeJson(text: string): Detection | null {
   const cleaned = text
@@ -114,8 +114,10 @@ export const analyzeFrame = createServerFn({ method: "POST" })
 
     if (!res.ok) {
       const body = await res.text();
-      if (res.status === 429) throw new Error("Too many checks at once — wait a few seconds and try again.");
-      if (res.status === 402) throw new Error("AI credits for this project are exhausted. Add credits to continue.");
+      if (res.status === 429)
+        throw new Error("Too many checks at once — wait a few seconds and try again.");
+      if (res.status === 402)
+        throw new Error("AI credits for this project are exhausted. Add credits to continue.");
       throw new Error(`Analysis failed (${res.status}): ${body.slice(0, 200)}`);
     }
 
@@ -174,7 +176,12 @@ export const geocodePlace = createServerFn({ method: "POST" })
     const q = encodeURIComponent(`${data.query}, India`);
     const json = (await nominatim(
       `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&countrycodes=in&limit=1&q=${q}`,
-    )) as Array<{ lat: string; lon: string; display_name: string; address?: Record<string, string> }>;
+    )) as Array<{
+      lat: string;
+      lon: string;
+      display_name: string;
+      address?: Record<string, string>;
+    }>;
     const hit = json?.[0];
     if (!hit) return null;
     return {
