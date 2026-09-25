@@ -227,12 +227,17 @@ export const HAZARD_LABELS: Record<string, string> = {
   other: "Other urban risk",
 };
 
+export function riskColor(score: number) {
+  if (score >= 70) return "#dc2626";
+  if (score >= 40) return "#eab308";
+  return "#22c55e";
+}
+
 export function severityColor(severity: string) {
   switch (severity) {
     case "critical":
-      return "#dc2626";
     case "high":
-      return "#f97316";
+      return "#dc2626";
     case "medium":
       return "#eab308";
     default:
@@ -241,8 +246,8 @@ export function severityColor(severity: string) {
 }
 
 export function severityFromScore(score: number) {
-  if (score >= 75) return "critical";
-  if (score >= 50) return "high";
-  if (score >= 25) return "medium";
+  if (score >= 90) return "critical";
+  if (score >= 70) return "high";
+  if (score >= 40) return "medium";
   return "low";
 }

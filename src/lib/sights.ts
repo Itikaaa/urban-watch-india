@@ -95,6 +95,11 @@ export type SightGroup = { kind: SightKind; label: string; count: number };
 
 const GROUP_ORDER: SightKind[] = ["person", "phone", "vehicle", "garbage", "scene"];
 
+export function clutterRisk(count: number) {
+  if (count <= 0) return 0;
+  return Math.min(95, 12 + count * 9);
+}
+
 export function groupSights(sights: Sight[]): SightGroup[] {
   const groups = new Map<string, SightGroup>();
   for (const sight of sights) {

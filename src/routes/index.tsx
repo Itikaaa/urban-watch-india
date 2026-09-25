@@ -46,7 +46,7 @@ import { fetchReports, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
 import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
-import { groupSights, type Sight } from "@/lib/sights";
+import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
 
 export const Route = createFileRoute("/")({
@@ -143,7 +143,7 @@ function sightsToDetection(sights: Sight[]): Detection {
   return {
     hazardDetected: garbage > 0,
     primaryType: garbage > 0 ? "garbage" : "other",
-    riskScore: garbage === 0 ? 0 : Math.min(70, 15 + garbage * 8),
+    riskScore: clutterRisk(garbage),
     confidence: items.length ? Math.max(...items.map((item) => item.confidence)) : 0,
     summary: groups.map((group) => `${group.count} ${group.label.toLowerCase()}`).join(", "),
     items,
@@ -187,6 +187,8 @@ function Home() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const placeRef = useRef<Place | null>(null);
+  placeRef.current = place;
   const {
     canvasRef,
     sights,
@@ -262,17 +264,18 @@ function Home() {
   async function readCurrentLocation() {
     if (!navigator.geolocation) {
       toast.error("This device cannot share its location.");
-      return;
+      return null;
     }
-    return new Promise<void>((resolve) => {
+    return new Promise<Place | null>((resolve) => {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
+          let next: Place;
           try {
             const info = await reverseGeocode({ data: { lat: latitude, lng: longitude } });
-            setPlace({ ...info, origin: "Live GPS" });
+            next = { ...info, origin: "Live GPS" };
           } catch {
-            setPlace({
+            next = {
               lat: latitude,
               lng: longitude,
               address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
@@ -280,13 +283,15 @@ function Home() {
               city: null,
               state: null,
               origin: "Live GPS",
-            });
+            };
           }
-          resolve();
+          placeRef.current = next;
+          setPlace(next);
+          resolve(next);
         },
         () => {
           toast.error("Location was blocked — type the place below instead.");
-          resolve();
+          resolve(null);
         },
         { enableHighAccuracy: true, timeout: 12000 },
       );
@@ -422,48 +427,54 @@ function Home() {
     }
   }
 
-  async function submitReport() {
-    if (!detection) return;
-    if (!place?.lat || !place?.lng) {
+  async function publishReport(input: {
+    detection: Detection;
+    located: Place;
+    image: string | null;
+    source: string;
+    note: string;
+    announce: boolean;
+  }) {
+    if (!input.located.lat || !input.located.lng) {
       toast.error("Add a location before submitting.");
-      return;
+      return false;
     }
     setSubmitting(true);
     try {
       let imagePath: string | null = null;
-      if (preview) {
+      if (input.image) {
         try {
-          imagePath = await uploadHazardImage(preview);
+          imagePath = await uploadHazardImage(input.image);
         } catch {
           toast("Photo could not be saved — sending the report without it.");
         }
       }
 
-      const severity = severityFromScore(detection.riskScore);
+      const severity = severityFromScore(input.detection.riskScore);
       const authority = resolveAuthority({
-        city: place.city,
-        state: place.state,
-        road: place.road,
+        city: input.located.city,
+        state: input.located.state,
+        road: input.located.road,
       });
 
       const { data, error } = await supabase
         .from("reports")
         .insert({
-          hazard_type: detection.primaryType,
+          hazard_type: input.detection.primaryType,
           severity,
-          risk_score: Math.round(detection.riskScore),
-          confidence: detection.confidence,
-          summary: detection.summary,
-          items: detection.items,
-          lat: place.lat,
-          lng: place.lng,
-          address: place.address,
-          road: place.road,
-          city: place.city,
-          state: place.state,
-          source: tab,
+          risk_score: Math.round(input.detection.riskScore),
+          confidence: input.detection.confidence,
+          summary: input.detection.summary,
+          items: input.detection.items,
+          lat: input.located.lat,
+          lng: input.located.lng,
+          address: input.located.address,
+          road: input.located.road,
+          city: input.located.city,
+          state: input.located.state,
+          source: input.source,
           image_path: imagePath,
-          reporter_note: note || null,
+          reporter_note: input.note || null,
           authority_name: authority.name,
           authority_dept: authority.dept,
           authority_contact: authority.contact,
@@ -473,14 +484,14 @@ function Home() {
       if (error) throw error;
 
       const roadHazard = ["pothole", "damaged_road", "open_manhole", "broken_footpath"].includes(
-        detection.primaryType,
+        input.detection.primaryType,
       );
 
       if (roadHazard || severity === "critical" || severity === "high") {
-        const roadName = place.road ?? place.address ?? "the reported location";
+        const roadName = input.located.road ?? input.located.address ?? "the reported location";
         const message =
-          `${HAZARD_LABELS[detection.primaryType] ?? detection.primaryType} on ${roadName}` +
-          `${place.city ? `, ${place.city}` : ""}. Risk ${Math.round(detection.riskScore)}/100. ${detection.summary}`;
+          `${HAZARD_LABELS[input.detection.primaryType] ?? input.detection.primaryType} on ${roadName}` +
+          `${input.located.city ? `, ${input.located.city}` : ""}. Risk ${Math.round(input.detection.riskScore)}/100. ${input.detection.summary}`;
         await supabase.from("alerts").insert({
           report_id: data.id,
           authority_name: authority.name,
@@ -489,7 +500,7 @@ function Home() {
           channel: "in-app",
           message,
         });
-        setAlertInfo({ authority, road: roadName, message });
+        if (input.announce) setAlertInfo({ authority, road: roadName, message });
       }
 
       toast.success("Report added to the live map.");
@@ -497,11 +508,64 @@ function Home() {
       setPreview(null);
       setNote("");
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not submit the report");
+      return false;
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function submitReport() {
+    if (!detection) return;
+    if (!place?.lat || !place.lng) {
+      toast.error("Add a location before submitting.");
+      return;
+    }
+    await publishReport({
+      detection,
+      located: place,
+      image: preview,
+      source: tab,
+      note,
+      announce: true,
+    });
+  }
+
+  async function captureGeoPhoto() {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const frame = drawToDataUrl(video, video.videoWidth, video.videoHeight);
+    const found = sightsRef.current;
+    const marked = annotateSource(video, video.videoWidth, video.videoHeight, found) ?? frame;
+    const local = sightsToDetection(found);
+    setPreview(marked);
+    setDetection(local);
+
+    const [ai, located] = await Promise.all([
+      analyze(frame),
+      placeRef.current?.lat != null && placeRef.current.lng != null
+        ? Promise.resolve(placeRef.current)
+        : readCurrentLocation(),
+    ]);
+    const merged = ai ? combineDetection(local, ai) : local;
+    setDetection(merged);
+    setPreview(marked);
+
+    if (merged.riskScore <= 70) {
+      toast(`Risk ${Math.round(merged.riskScore)}%. Photo kept here.`);
+      return;
+    }
+    if (!located?.lat || !located.lng) return;
+    await publishReport({
+      detection: merged,
+      located,
+      image: marked,
+      source: "geo-photo",
+      note,
+      announce: false,
+    });
   }
 
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
@@ -624,6 +688,13 @@ function Home() {
                             <Radar className="size-4" />
                           )}
                           Capture
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => void captureGeoPhoto()}
+                          disabled={analyzing || submitting}
+                        >
+                          <MapPin className="size-4" /> Geo photo
                         </Button>
                         <Button variant="ghost" onClick={stopCamera}>
                           Stop
@@ -773,17 +844,13 @@ function Home() {
               />
               <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#22c55e" }} /> Low
+                  <span className="size-3 rounded-full" style={{ background: "#22c55e" }} /> Green
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#eab308" }} /> Medium
+                  <span className="size-3 rounded-full" style={{ background: "#eab308" }} /> Yellow
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#f97316" }} /> High
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} />{" "}
-                  Critical
+                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} /> Red
                 </span>
               </div>
             </CardContent>
