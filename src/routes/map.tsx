@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import MapPanel from "@/components/MapPanel";
 import { fetchAlerts, fetchReports } from "@/lib/reports";
 import { HAZARD_LABELS } from "@/lib/authorities";
+import { AuthCard, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/map")({
   head: () => ({
@@ -34,9 +35,18 @@ export const Route = createFileRoute("/map")({
 const FILTERS = ["all", "pothole", "garbage", "waterlogging", "other"] as const;
 
 function MapPage() {
+  const { user, loading, signOut } = useAuth();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
-  const { data: reports = [] } = useQuery({ queryKey: ["reports"], queryFn: () => fetchReports(500) });
-  const { data: alerts = [] } = useQuery({ queryKey: ["alerts"], queryFn: () => fetchAlerts(50) });
+  const { data: reports = [] } = useQuery({
+    queryKey: ["reports"],
+    queryFn: () => fetchReports(500),
+    enabled: Boolean(user),
+  });
+  const { data: alerts = [] } = useQuery({
+    queryKey: ["alerts"],
+    queryFn: () => fetchAlerts(50),
+    enabled: Boolean(user),
+  });
 
   const filtered = useMemo(() => {
     if (filter === "all") return reports;
@@ -54,6 +64,14 @@ function MapPage() {
     [reports],
   );
 
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Checking your sign-in…</div>;
+  }
+
+  if (!user) {
+    return <AuthCard message="Sign in to view the shared reports and alert log." />;
+  }
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border" style={{ background: "var(--gradient-hero)" }}>
@@ -62,11 +80,16 @@ function MapPage() {
             <Radar className="size-6 text-primary" />
             <span className="text-lg font-bold tracking-tight">Live risk map</span>
           </div>
-          <Link to="/">
-            <Button variant="secondary" size="sm">
-              <ArrowLeft className="size-4" /> Scan a street
+          <div className="flex items-center gap-2">
+            <Link to="/">
+              <Button variant="secondary" size="sm">
+                <ArrowLeft className="size-4" /> Scan a street
+              </Button>
+            </Link>
+            <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+              Sign out
             </Button>
-          </Link>
+          </div>
         </div>
       </header>
 
