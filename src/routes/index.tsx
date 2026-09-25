@@ -28,12 +28,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import MapPanel from "@/components/MapPanel";
-import { analyzeFrame, geocodePlace, reverseGeocode, type Detection } from "@/lib/detect.functions";
+import {
+  analyzeFrame,
+  geocodePlace,
+  reverseGeocode,
+  type Detection,
+  type DetectedItem,
+} from "@/lib/detect.functions";
 import { readExifGps } from "@/lib/exif";
-import { HAZARD_LABELS, resolveAuthority, severityFromScore, type Authority } from "@/lib/authorities";
+import {
+  HAZARD_LABELS,
+  resolveAuthority,
+  severityFromScore,
+  type Authority,
+} from "@/lib/authorities";
 import { fetchReports, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
 import { AuthCard, useAuth } from "@/lib/auth";
+import { annotateSource, runStillDetections } from "@/lib/object-detector";
+import { groupSights, type Sight } from "@/lib/sights";
+import { useLiveSights } from "@/hooks/use-live-sights";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -96,14 +110,59 @@ async function shrinkImage(dataUrl: string) {
   return drawToDataUrl(img, img.naturalWidth, img.naturalHeight);
 }
 
-function mergeDetections(list: Detection[]): Detection {
-  const best = list.reduce((a, b) => (b.riskScore > a.riskScore ? b : a));
-  const items = list.flatMap((d) => d.items);
+const ROAD_TYPES = new Set([
+  "pothole",
+  "waterlogging",
+  "debris",
+  "open_manhole",
+  "broken_footpath",
+  "damaged_road",
+  "traffic_hazard",
+  "stagnant_water",
+]);
+
+function sightsToDetection(sights: Sight[]): Detection {
+  const groups = groupSights(sights);
+  const items: DetectedItem[] = groups.map((group) => {
+    const matched = sights.filter(
+      (sight) => sight.kind === group.kind && sight.label === group.label,
+    );
+    const confidence = matched.reduce((sum, sight) => sum + sight.score, 0) / matched.length;
+    const type =
+      group.kind === "vehicle" ? "vehicle" : group.kind === "scene" ? "other" : group.kind;
+    return {
+      type,
+      label: group.label,
+      count: group.count,
+      severity: group.kind === "garbage" ? Math.min(5, 1 + Math.ceil(group.count / 2)) : 1,
+      confidence,
+      note: "",
+    };
+  });
+  const garbage = sights.filter((sight) => sight.kind === "garbage").length;
   return {
-    ...best,
+    hazardDetected: garbage > 0,
+    primaryType: garbage > 0 ? "garbage" : "other",
+    riskScore: garbage === 0 ? 0 : Math.min(70, 15 + garbage * 8),
+    confidence: items.length ? Math.max(...items.map((item) => item.confidence)) : 0,
+    summary: groups.map((group) => `${group.count} ${group.label.toLowerCase()}`).join(", "),
     items,
-    summary: best.summary,
-    riskScore: Math.max(...list.map((d) => d.riskScore)),
+    locationGuess: null,
+  };
+}
+
+function combineDetection(local: Detection, ai: Detection): Detection {
+  const roadItems = ai.items.filter((item) => ROAD_TYPES.has(item.type));
+  const items = [...local.items, ...roadItems];
+  const useRoad = roadItems.length > 0 && ai.riskScore > local.riskScore;
+  return {
+    hazardDetected: local.hazardDetected || roadItems.length > 0 || ai.hazardDetected,
+    primaryType: useRoad ? ai.primaryType : local.items.length ? local.primaryType : ai.primaryType,
+    riskScore: Math.max(local.riskScore, ai.riskScore),
+    confidence: Math.max(local.confidence, ai.confidence),
+    summary: [local.summary, roadItems.length ? ai.summary : ""].filter(Boolean).join(". "),
+    items: items.length ? items : ai.items,
+    locationGuess: ai.locationGuess,
   };
 }
 
@@ -119,12 +178,21 @@ function Home() {
   const [manual, setManual] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [alertInfo, setAlertInfo] = useState<{ authority: Authority; road: string; message: string } | null>(null);
+  const [alertInfo, setAlertInfo] = useState<{
+    authority: Authority;
+    road: string;
+    message: string;
+  } | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
-  const [autoScan, setAutoScan] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const {
+    canvasRef,
+    sights,
+    sightsRef,
+    status: detectorStatus,
+  } = useLiveSights(videoRef, cameraOn && tab === "live");
 
   const { data: reports = [] } = useQuery({
     queryKey: ["reports"],
@@ -136,10 +204,17 @@ function Home() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     setCameraOn(false);
-    setAutoScan(false);
   }, []);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!cameraOn || !video || !stream) return;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    void video.play().catch(() => undefined);
+  }, [cameraOn, tab]);
 
   async function startCamera() {
     try {
@@ -153,7 +228,7 @@ function Home() {
         await videoRef.current.play();
       }
       setCameraOn(true);
-      void useCurrentLocation();
+      void readCurrentLocation();
     } catch {
       toast.error("Camera access was blocked. Allow the camera, or use the photo tab.");
     }
@@ -162,11 +237,7 @@ function Home() {
   const analyze = useCallback(async (image: string, hint?: string) => {
     setAnalyzing(true);
     try {
-      const result = await analyzeFrame({ data: { image, hint } });
-      setDetection(result);
-      setPreview(image);
-      if (!result.hazardDetected) toast("Nothing risky spotted in this frame.");
-      return result;
+      return await analyzeFrame({ data: { image, hint } });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Analysis failed");
       return null;
@@ -180,18 +251,15 @@ function Home() {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return;
     const frame = drawToDataUrl(video, video.videoWidth, video.videoHeight);
-    await analyze(frame);
-  }, [analyze]);
+    const local = sightsToDetection(sightsRef.current);
+    setPreview(frame);
+    setDetection(local);
+    const ai = await analyze(frame);
+    if (ai) setDetection(combineDetection(local, ai));
+    else if (!local.items.length) toast("Nothing in this frame.");
+  }, [analyze, sightsRef]);
 
-  useEffect(() => {
-    if (!autoScan || !cameraOn) return;
-    const id = setInterval(() => {
-      if (!analyzing) void scanLiveFrame();
-    }, 9000);
-    return () => clearInterval(id);
-  }, [autoScan, cameraOn, analyzing, scanLiveFrame]);
-
-  async function useCurrentLocation() {
+  async function readCurrentLocation() {
     if (!navigator.geolocation) {
       toast.error("This device cannot share its location.");
       return;
@@ -264,9 +332,26 @@ function Home() {
       }
     }
 
+    let local = sightsToDetection([]);
+    try {
+      const img = new Image();
+      img.src = dataUrl;
+      await img.decode();
+      local = await runStillDetections(async (detect) => {
+        const found = detect(img);
+        const marked = annotateSource(img, img.naturalWidth, img.naturalHeight, found);
+        if (marked) setPreview(marked);
+        return sightsToDetection(found);
+      });
+    } catch {
+      toast.error("Could not read objects in this photo.");
+    }
+    setDetection(local);
     const result = await analyze(dataUrl);
-    if (!gps && result?.locationGuess?.text) {
-      await applyManualLocation(result.locationGuess.text, "Guessed from the photo");
+    const merged = result ? combineDetection(local, result) : local;
+    setDetection(merged);
+    if (!gps && merged.locationGuess?.text) {
+      await applyManualLocation(merged.locationGuess.text, "Guessed from the photo");
     }
   }
 
@@ -285,38 +370,47 @@ function Home() {
       });
       const duration = Math.max(0.1, video.duration || 1);
       const count = Math.min(6, Math.max(3, Math.round(duration / 3)));
-      const results: Detection[] = [];
-      let bestFrame: string | null = null;
+      let bestLocal = sightsToDetection([]);
+      let bestMarked: string | null = null;
+      let bestRaw: string | null = null;
       let bestScore = -1;
 
-      for (let i = 0; i < count; i++) {
-        const t = (duration * (i + 0.5)) / count;
-        setProgress(`Checking moment ${i + 1} of ${count}…`);
-        await new Promise((res) => {
-          video.onseeked = () => res(null);
-          video.currentTime = Math.min(t, duration - 0.05);
-        });
-        const frame = drawToDataUrl(video, video.videoWidth, video.videoHeight);
-        try {
-          const det = await analyzeFrame({ data: { image: frame } });
-          results.push(det);
-          if (det.riskScore > bestScore) {
-            bestScore = det.riskScore;
-            bestFrame = frame;
+      try {
+        await runStillDetections(async (detect) => {
+          for (let i = 0; i < count; i++) {
+            const t = (duration * (i + 0.5)) / count;
+            setProgress(`${i + 1}/${count}`);
+            await new Promise((res) => {
+              video.onseeked = () => res(null);
+              video.currentTime = Math.min(t, duration - 0.05);
+            });
+            const found = detect(video);
+            const local = sightsToDetection(found);
+            const raw = drawToDataUrl(video, video.videoWidth, video.videoHeight);
+            const marked = annotateSource(video, video.videoWidth, video.videoHeight, found);
+            const score = local.riskScore + found.length;
+            if (score > bestScore) {
+              bestScore = score;
+              bestLocal = local;
+              bestRaw = raw;
+              bestMarked = marked ?? raw;
+            }
           }
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : "A frame could not be checked");
-        }
+        });
+      } catch {
+        toast.error("Could not read objects in this video.");
       }
       URL.revokeObjectURL(url);
 
-      if (!results.length) {
+      if (!bestRaw || !bestMarked) {
         toast.error("No frame could be checked from this video.");
         return;
       }
-      const merged = mergeDetections(results);
+      setPreview(bestMarked);
+      setDetection(bestLocal);
+      const ai = await analyze(bestRaw);
+      const merged = ai ? combineDetection(bestLocal, ai) : bestLocal;
       setDetection(merged);
-      setPreview(bestFrame);
       if (merged.locationGuess?.text && !place) {
         await applyManualLocation(merged.locationGuess.text, "Guessed from the video");
       }
@@ -346,7 +440,11 @@ function Home() {
       }
 
       const severity = severityFromScore(detection.riskScore);
-      const authority = resolveAuthority({ city: place.city, state: place.state, road: place.road });
+      const authority = resolveAuthority({
+        city: place.city,
+        state: place.state,
+        road: place.road,
+      });
 
       const { data, error } = await supabase
         .from("reports")
@@ -381,10 +479,8 @@ function Home() {
       if (roadHazard || severity === "critical" || severity === "high") {
         const roadName = place.road ?? place.address ?? "the reported location";
         const message =
-          `${HAZARD_LABELS[detection.primaryType] ?? detection.primaryType} reported on ${roadName}` +
-          `${place.city ? `, ${place.city}` : ""}. Risk ${Math.round(detection.riskScore)}/100 (${severity}). ` +
-          `${detection.summary} Please inspect and, if this stretch is under an active maintenance contract, ` +
-          `direct the contractor on record to repair it within the defect-liability period.`;
+          `${HAZARD_LABELS[detection.primaryType] ?? detection.primaryType} on ${roadName}` +
+          `${place.city ? `, ${place.city}` : ""}. Risk ${Math.round(detection.riskScore)}/100. ${detection.summary}`;
         await supabase.from("alerts").insert({
           report_id: data.id,
           authority_name: authority.name,
@@ -409,10 +505,16 @@ function Home() {
   }
 
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
-  const totalItems = detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
+  const totalItems =
+    detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
+  const liveGroups = groupSights(sights);
 
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Checking your sign-in…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+        Checking your sign-in…
+      </div>
+    );
   }
 
   if (!user) {
@@ -426,7 +528,9 @@ function Home() {
           <div className="flex items-center gap-2">
             <Radar className="size-6 text-primary" />
             <span className="text-lg font-bold tracking-tight">SadakSafe</span>
-            <Badge variant="secondary" className="ml-1">India</Badge>
+            <Badge variant="secondary" className="ml-1">
+              India
+            </Badge>
           </div>
           <nav className="flex items-center gap-2">
             <Link to="/map">
@@ -439,22 +543,13 @@ function Home() {
             </Button>
           </nav>
         </div>
-        <div className="mx-auto max-w-6xl px-4 pb-10 pt-4">
-          <h1 className="max-w-3xl text-3xl font-bold leading-tight sm:text-4xl">
-            Spot potholes, garbage and waterlogging on Indian streets — and get them to the right authority
-          </h1>
-          <p className="mt-3 max-w-2xl text-muted-foreground">
-            Scan live with your camera, or upload a geotagged photo or video. Every confirmed hazard lands on a shared
-            map, colour-coded by how dangerous it is.
-          </p>
-        </div>
       </header>
 
       <main className="mx-auto grid max-w-6xl gap-6 px-4 py-8 lg:grid-cols-[1.1fr_1fr]">
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">1. Check a street</CardTitle>
+              <CardTitle className="text-base">Scan</CardTitle>
             </CardHeader>
             <CardContent>
               <Tabs value={tab} onValueChange={setTab}>
@@ -471,8 +566,49 @@ function Home() {
                 </TabsList>
 
                 <TabsContent value="live" className="space-y-3 pt-4">
-                  <div className="overflow-hidden rounded-xl border border-border bg-black">
-                    <video ref={videoRef} playsInline muted className="aspect-video w-full object-cover" />
+                  <div className="relative overflow-hidden rounded-xl border border-border bg-black">
+                    <video
+                      ref={videoRef}
+                      playsInline
+                      muted
+                      className="aspect-video w-full object-contain"
+                    />
+                    <canvas
+                      ref={canvasRef}
+                      className="pointer-events-none absolute inset-0 h-full w-full"
+                    />
+                    {cameraOn && liveGroups.length > 0 && (
+                      <div className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap gap-1">
+                        {liveGroups.map((group) => (
+                          <span
+                            key={`${group.kind}-${group.label}`}
+                            className={`rounded bg-black/75 px-2 py-0.5 text-xs ${
+                              group.kind === "person"
+                                ? "text-sky-300"
+                                : group.kind === "phone"
+                                  ? "text-yellow-300"
+                                  : group.kind === "vehicle"
+                                    ? "text-orange-300"
+                                    : group.kind === "garbage"
+                                      ? "text-red-400"
+                                      : "text-white"
+                            }`}
+                          >
+                            {group.label} {group.count}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {cameraOn && detectorStatus === "loading" && (
+                      <div className="absolute left-2 top-2 rounded bg-black/75 px-2 py-0.5 text-xs text-white">
+                        Loading
+                      </div>
+                    )}
+                    {cameraOn && detectorStatus === "error" && (
+                      <div className="absolute left-2 top-2 rounded bg-black/75 px-2 py-0.5 text-xs text-white">
+                        Detector unavailable
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {!cameraOn ? (
@@ -482,11 +618,12 @@ function Home() {
                     ) : (
                       <>
                         <Button onClick={() => void scanLiveFrame()} disabled={analyzing}>
-                          {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Radar className="size-4" />}
-                          Scan now
-                        </Button>
-                        <Button variant={autoScan ? "default" : "secondary"} onClick={() => setAutoScan((v) => !v)}>
-                          {autoScan ? "Auto-scan on" : "Auto-scan off"}
+                          {analyzing ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Radar className="size-4" />
+                          )}
+                          Capture
                         </Button>
                         <Button variant="ghost" onClick={stopCamera}>
                           Stop
@@ -505,10 +642,6 @@ function Home() {
                       if (f) void onPhoto(f);
                     }}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    If the photo carries a GPS tag, the spot is filled in for you. Otherwise the app tries to work out
-                    the place from signboards and landmarks in the picture.
-                  </p>
                 </TabsContent>
 
                 <TabsContent value="video" className="space-y-3 pt-4">
@@ -520,15 +653,12 @@ function Home() {
                       if (f) void onVideo(f);
                     }}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Several moments across the clip are checked and the worst one is reported.
-                  </p>
                 </TabsContent>
               </Tabs>
 
               {analyzing && (
                 <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" /> {progress || "Looking for hazards…"}
+                  <Loader2 className="size-4 animate-spin" /> {progress || "Checking"}
                 </div>
               )}
             </CardContent>
@@ -536,11 +666,11 @@ function Home() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">2. Where is it?</CardTitle>
+              <CardTitle className="text-base">Location</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => void useCurrentLocation()}>
+                <Button variant="secondary" onClick={() => void readCurrentLocation()}>
                   <MapPin className="size-4" /> Use my live location
                 </Button>
               </div>
@@ -550,7 +680,10 @@ function Home() {
                   value={manual}
                   onChange={(e) => setManual(e.target.value)}
                 />
-                <Button variant="secondary" onClick={() => void applyManualLocation(manual, "Typed by reporter")}>
+                <Button
+                  variant="secondary"
+                  onClick={() => void applyManualLocation(manual, "Typed by reporter")}
+                >
                   Find
                 </Button>
               </div>
@@ -559,7 +692,9 @@ function Home() {
                   <div className="font-medium">{place.address ?? "Located"}</div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {place.origin}
-                    {place.lat && place.lng ? ` · ${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}` : ""}
+                    {place.lat && place.lng
+                      ? ` · ${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`
+                      : ""}
                   </div>
                 </div>
               ) : (
@@ -572,16 +707,12 @@ function Home() {
             <Card className="border-primary/50">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <AlertTriangle className="size-4 text-primary" /> 3. Confirm what was found
+                  <AlertTriangle className="size-4 text-primary" /> Found
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {preview && (
-                  <img
-                    src={preview}
-                    alt="Frame checked for street hazards"
-                    className="w-full rounded-lg border border-border"
-                  />
+                {preview && !(cameraOn && tab === "live") && (
+                  <img src={preview} alt="" className="w-full rounded-lg border border-border" />
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge>{HAZARD_LABELS[detection.primaryType] ?? detection.primaryType}</Badge>
@@ -589,9 +720,8 @@ function Home() {
                     {severity} risk · {Math.round(detection.riskScore)}/100
                   </Badge>
                   <Badge variant="secondary">{Math.round(detection.confidence * 100)}% sure</Badge>
-                  {totalItems > 0 && <Badge variant="secondary">{totalItems} item(s) spotted</Badge>}
+                  {totalItems > 0 && <Badge variant="secondary">{totalItems}</Badge>}
                 </div>
-                <p className="text-sm text-muted-foreground">{detection.summary}</p>
                 {detection.items.length > 0 && (
                   <ul className="space-y-1 text-sm">
                     {detection.items.map((item, i) => (
@@ -600,28 +730,31 @@ function Home() {
                           {item.label}
                           {item.count > 1 ? ` ×${item.count}` : ""}
                         </span>
-                        <span className="text-muted-foreground">{item.note}</span>
+                        {item.note ? (
+                          <span className="text-muted-foreground">{item.note}</span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
                 )}
                 <Textarea
-                  placeholder="Anything to add? (e.g. school route, water stays for days)"
+                  placeholder="Note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                 />
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => void submitReport()} disabled={submitting}>
-                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                    Confirm & put on the map
+                    {submitting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Send className="size-4" />
+                    )}
+                    Put on map
                   </Button>
                   <Button variant="ghost" onClick={() => setDetection(null)}>
                     Discard
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  The AI is thorough but not perfect — please check the list before you confirm.
-                </p>
               </CardContent>
             </Card>
           )}
@@ -649,7 +782,8 @@ function Home() {
                   <span className="size-3 rounded-full" style={{ background: "#f97316" }} /> High
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} /> Critical
+                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} />{" "}
+                  Critical
                 </span>
               </div>
             </CardContent>
@@ -663,16 +797,20 @@ function Home() {
               {reports.slice(0, 6).map((r) => (
                 <div key={r.id} className="rounded-lg border border-border p-3 text-sm">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}</span>
+                    <span className="font-medium">
+                      {HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}
+                    </span>
                     <Badge variant="outline" className="capitalize">
                       {r.severity}
                     </Badge>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{r.address ?? "Location pending"}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {r.address ?? "Location pending"}
+                  </div>
                 </div>
               ))}
               {reports.length === 0 && (
-                <p className="text-sm text-muted-foreground">No reports yet — be the first to scan a street.</p>
+                <p className="text-sm text-muted-foreground">No reports yet.</p>
               )}
             </CardContent>
           </Card>
@@ -694,7 +832,9 @@ function Home() {
               <div className="font-medium">{alertInfo?.authority.name}</div>
               <div className="text-muted-foreground">{alertInfo?.authority.dept}</div>
               {alertInfo?.authority.helpline && (
-                <div className="mt-1 text-muted-foreground">Helpline: {alertInfo.authority.helpline}</div>
+                <div className="mt-1 text-muted-foreground">
+                  Helpline: {alertInfo.authority.helpline}
+                </div>
               )}
               {alertInfo?.authority.contact && (
                 <a
@@ -708,10 +848,6 @@ function Home() {
               )}
             </div>
             <p className="text-muted-foreground">{alertInfo?.message}</p>
-            <p className="text-xs text-muted-foreground">
-              India has no open public record linking a road to its contractor, so the alert goes to the civic body that
-              holds the contract and can direct the contractor on record.
-            </p>
           </div>
         </DialogContent>
       </Dialog>

@@ -214,7 +214,10 @@ export function resolveAuthority(input: {
 export const HAZARD_LABELS: Record<string, string> = {
   pothole: "Pothole",
   waterlogging: "Waterlogging",
-  garbage: "Garbage accumulation",
+  garbage: "Garbage",
+  person: "Person",
+  phone: "Phone",
+  vehicle: "Vehicle",
   debris: "Construction debris",
   open_manhole: "Open manhole / drain",
   broken_footpath: "Broken footpath",
