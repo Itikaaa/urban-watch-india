@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790344891756,
+      "tag": "0000_require_authenticated_report_and_media_access",
+      "breakpoints": true
+    }
+  ]
+}
