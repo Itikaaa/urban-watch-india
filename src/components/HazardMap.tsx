@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
-import { HAZARD_LABELS, severityColor } from "@/lib/authorities";
+import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
 
 export type MapReport = {
   id: string;
@@ -29,7 +29,10 @@ export default function HazardMap({
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current, { scrollWheelZoom: true }).setView([22.9734, 78.6569], 5);
+    const map = L.map(containerRef.current, { scrollWheelZoom: true }).setView(
+      [22.9734, 78.6569],
+      5,
+    );
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
       maxZoom: 19,
@@ -52,7 +55,7 @@ export default function HazardMap({
     const points: [number, number][] = [];
     for (const r of reports) {
       if (r.lat == null || r.lng == null) continue;
-      const color = severityColor(r.severity);
+      const color = riskColor(r.risk_score);
       points.push([r.lat, r.lng]);
       L.circleMarker([r.lat, r.lng], {
         radius: 7 + Math.round(r.risk_score / 18),
@@ -79,5 +82,7 @@ export default function HazardMap({
     }
   }, [reports, focus]);
 
-  return <div ref={containerRef} style={{ height }} className="w-full rounded-xl border border-border" />;
+  return (
+    <div ref={containerRef} style={{ height }} className="w-full rounded-xl border border-border" />
+  );
 }

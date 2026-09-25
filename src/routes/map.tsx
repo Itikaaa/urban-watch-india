@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import MapPanel from "@/components/MapPanel";
 import { fetchAlerts, fetchReports } from "@/lib/reports";
-import { HAZARD_LABELS } from "@/lib/authorities";
+import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
 import { AuthCard, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/map")({
@@ -23,7 +23,8 @@ export const Route = createFileRoute("/map")({
       { property: "og:title", content: "Live Urban Risk Map of India" },
       {
         property: "og:description",
-        content: "Every reported pothole, garbage pile and waterlogged stretch, plotted and colour-coded by risk.",
+        content:
+          "Every reported pothole, garbage pile and waterlogged stretch, plotted and colour-coded by risk.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -65,7 +66,11 @@ function MapPage() {
   );
 
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Checking your sign-in…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+        Checking your sign-in…
+      </div>
+    );
   }
 
   if (!user) {
@@ -103,7 +108,9 @@ function MapPage() {
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <div className="text-2xl font-bold text-destructive">{counts.critical + counts.high}</div>
+              <div className="text-2xl font-bold text-destructive">
+                {counts.critical + counts.high}
+              </div>
               <div className="text-sm text-muted-foreground">High or critical risk</div>
             </CardContent>
           </Card>
@@ -117,13 +124,29 @@ function MapPage() {
 
         <div className="flex flex-wrap gap-2">
           {FILTERS.map((f) => (
-            <Button key={f} size="sm" variant={filter === f ? "default" : "secondary"} onClick={() => setFilter(f)}>
+            <Button
+              key={f}
+              size="sm"
+              variant={filter === f ? "default" : "secondary"}
+              onClick={() => setFilter(f)}
+            >
               {f === "all" ? "Everything" : (HAZARD_LABELS[f] ?? f)}
             </Button>
           ))}
         </div>
 
         <MapPanel reports={filtered} height={520} />
+        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <span className="size-3 rounded-full" style={{ background: riskColor(10) }} /> Green
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-3 rounded-full" style={{ background: riskColor(50) }} /> Yellow
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-3 rounded-full" style={{ background: riskColor(80) }} /> Red
+          </span>
+        </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
@@ -134,19 +157,27 @@ function MapPage() {
               {filtered.slice(0, 20).map((r) => (
                 <div key={r.id} className="rounded-lg border border-border p-3 text-sm">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}</span>
+                    <span className="font-medium">
+                      {HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}
+                    </span>
                     <Badge variant="outline" className="capitalize">
                       {r.severity} · {r.risk_score}
                     </Badge>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{r.address ?? "Location pending"}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {r.address ?? "Location pending"}
+                  </div>
                   <p className="mt-1 text-muted-foreground">{r.summary}</p>
                   {r.authority_name && (
-                    <div className="mt-1 text-xs text-muted-foreground">Responsible: {r.authority_name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Responsible: {r.authority_name}
+                    </div>
                   )}
                 </div>
               ))}
-              {filtered.length === 0 && <p className="text-sm text-muted-foreground">Nothing reported yet.</p>}
+              {filtered.length === 0 && (
+                <p className="text-sm text-muted-foreground">Nothing reported yet.</p>
+              )}
             </CardContent>
           </Card>
 
@@ -167,7 +198,9 @@ function MapPage() {
                   <p className="mt-1 text-muted-foreground">{a.message}</p>
                 </div>
               ))}
-              {alerts.length === 0 && <p className="text-sm text-muted-foreground">No alerts raised yet.</p>}
+              {alerts.length === 0 && (
+                <p className="text-sm text-muted-foreground">No alerts raised yet.</p>
+              )}
             </CardContent>
           </Card>
         </div>
