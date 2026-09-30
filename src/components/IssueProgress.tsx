@@ -31,29 +31,25 @@ export function IssueProgress({
   const stage = handlingStage(status);
   const hasTime = etaHours != null || Boolean(dueAt);
   const dueLabel = dueAt ? new Date(dueAt).toLocaleString() : null;
-  const steps = [
-    { title: "Reported successfully", done: true },
-    {
-      title: assigned ? `Assigned to ${assigned.name}` : "Waiting for municipal assignment",
-      detail: assigned ? assigned.focus : "The authority dashboard assigns a field team.",
-      done: Boolean(assigned),
-    },
-    {
-      title: hasTime
-        ? `Completes in ${formatResolution(etaHours ?? 0)}`
-        : "Waiting for time allocation",
-      detail: hasTime ? dueLabel : "The authority sets how long the repair should take.",
-      done: hasTime || stage === "done",
-    },
-    {
-      title: stage === "done" ? "Done and closed" : "Waiting for verified repair photo",
-      detail:
-        stage === "done"
-          ? (verifySummary ?? "AI confirmed the street no longer shows the reported issue.")
-          : "The authority uploads a photo of the fixed street. AI must find no remaining issue.",
-      done: stage === "done",
-    },
-  ];
+  const steps: { title: string; detail?: string | null }[] = [{ title: "Reported successfully" }];
+  if (assigned) {
+    steps.push({
+      title: `Assigned to ${assigned.name}`,
+      detail: assigned.focus,
+    });
+  }
+  if (hasTime) {
+    steps.push({
+      title: `Completes in ${formatResolution(etaHours ?? 0)}`,
+      detail: dueLabel,
+    });
+  }
+  if (stage === "done") {
+    steps.push({
+      title: "Done and closed",
+      detail: verifySummary ?? "AI confirmed the street no longer shows the reported issue.",
+    });
+  }
 
   return (
     <div className="space-y-3">
@@ -65,17 +61,11 @@ export function IssueProgress({
       <ol className="space-y-2">
         {steps.map((step, index) => (
           <li key={step.title} className="flex gap-2 text-sm">
-            <span
-              className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium ${
-                step.done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}
-            >
+            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground">
               {index + 1}
             </span>
             <span>
-              <span className={step.done ? "font-medium" : "text-muted-foreground"}>
-                {step.title}
-              </span>
+              <span className="font-medium">{step.title}</span>
               {step.detail ? (
                 <span className="mt-0.5 block text-xs text-muted-foreground">{step.detail}</span>
               ) : null}
@@ -83,6 +73,12 @@ export function IssueProgress({
           </li>
         ))}
       </ol>
+      {steps.length === 1 ? (
+        <p className="text-xs text-muted-foreground">
+          Team assignment, time, and completion will show here only after the municipal authority
+          updates this report.
+        </p>
+      ) : null}
     </div>
   );
 }

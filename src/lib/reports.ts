@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { findOpenDuplicate } from "@/lib/handling";
 
 export type ReportRow = {
   id: string;
@@ -49,6 +50,18 @@ export async function fetchReports(limit = 200): Promise<ReportRow[]> {
     .limit(limit);
   if (error) throw error;
   return (data ?? []) as ReportRow[];
+}
+
+export async function findOpenDuplicateReport(
+  lat: number,
+  lng: number,
+  hazardType: string,
+  known: ReportRow[] = [],
+): Promise<ReportRow | null> {
+  const local = findOpenDuplicate(known, lat, lng, hazardType);
+  if (local) return local;
+  const open = await fetchReports(400);
+  return findOpenDuplicate(open, lat, lng, hazardType);
 }
 
 export async function fetchAlerts(limit = 50): Promise<AlertRow[]> {
