@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   applyPackedHandling,
   findOpenDuplicate,
+  findRecentPin,
   packHandling,
   unpackHandling,
   type PackedHandling,
@@ -68,6 +69,9 @@ export async function findOpenDuplicateReport(
 ): Promise<ReportRow | null> {
   const local = findOpenDuplicate(known, lat, lng, hazardType);
   if (local) return local;
+  if (findRecentPin(lat, lng, hazardType)) {
+    return { id: "recent-pin" } as ReportRow;
+  }
   const open = await fetchReports(400);
   return findOpenDuplicate(open, lat, lng, hazardType);
 }
@@ -85,7 +89,6 @@ export async function updateReportHandling(
   },
 ) {
   const packed: PackedHandling = {
-    v: 1,
     ...(unpackHandling(current.authority_dept) ?? {
       teamId: current.assigned_team,
       etaHours: current.eta_hours,
@@ -93,6 +96,7 @@ export async function updateReportHandling(
       proofPath: current.proof_image_path,
       verify: current.verify_summary,
     }),
+    v: 1,
   };
   if (patch.team) packed.teamId = patch.team.id;
   if (patch.etaHours !== undefined) packed.etaHours = patch.etaHours;

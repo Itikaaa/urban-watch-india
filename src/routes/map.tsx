@@ -9,9 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import MapPanel from "@/components/MapPanel";
 import { fetchAlerts } from "@/lib/reports";
 import { useLiveReports } from "@/hooks/use-live-reports";
-import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
+import { riskColor } from "@/lib/authorities";
 import { IssueProgress } from "@/components/IssueProgress";
 import { AuthCard, useAuth } from "@/lib/auth";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { hazardLabel } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-provider";
 
 export const Route = createFileRoute("/map")({
   head: () => ({
@@ -38,6 +41,7 @@ export const Route = createFileRoute("/map")({
 const FILTERS = ["all", "pothole", "garbage", "waterlogging", "other"] as const;
 
 function MapPage() {
+  const { t, locale } = useT();
   const { user, loading, signOut } = useAuth();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const { data: reports = [] } = useLiveReports(500, Boolean(user));
@@ -66,13 +70,13 @@ function MapPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        Checking your sign-in…
+        {t("checkingSignIn")}
       </div>
     );
   }
 
   if (!user) {
-    return <AuthCard message="Sign in to view the shared reports and alert log." />;
+    return <AuthCard message={t("authMapMessage")} />;
   }
 
   return (
@@ -81,16 +85,17 @@ function MapPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
           <div className="flex items-center gap-2">
             <Radar className="size-6 text-primary" />
-            <span className="text-lg font-bold tracking-tight">Live risk map</span>
+            <span className="text-lg font-bold tracking-tight">{t("liveRiskMap")}</span>
           </div>
           <div className="flex items-center gap-2">
+            <LanguageSwitcher />
             <Link to="/">
               <Button variant="secondary" size="sm">
-                <ArrowLeft className="size-4" /> Scan a street
+                <ArrowLeft className="size-4" /> {t("scanStreet")}
               </Button>
             </Link>
             <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-              Sign out
+              {t("signOut")}
             </Button>
           </div>
         </div>
@@ -101,7 +106,7 @@ function MapPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">{reports.length}</div>
-              <div className="text-sm text-muted-foreground">Reports on the map</div>
+              <div className="text-sm text-muted-foreground">{t("reportsOnMap")}</div>
             </CardContent>
           </Card>
           <Card>
@@ -109,13 +114,13 @@ function MapPage() {
               <div className="text-2xl font-bold text-destructive">
                 {counts.critical + counts.high}
               </div>
-              <div className="text-sm text-muted-foreground">High or critical risk</div>
+              <div className="text-sm text-muted-foreground">{t("highOrCritical")}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">{alerts.length}</div>
-              <div className="text-sm text-muted-foreground">Alerts raised with authorities</div>
+              <div className="text-sm text-muted-foreground">{t("alertsRaised")}</div>
             </CardContent>
           </Card>
         </div>
@@ -128,7 +133,7 @@ function MapPage() {
               variant={filter === f ? "default" : "secondary"}
               onClick={() => setFilter(f)}
             >
-              {f === "all" ? "Everything" : (HAZARD_LABELS[f] ?? f)}
+              {f === "all" ? t("everything") : hazardLabel(f, locale)}
             </Button>
           ))}
         </div>
@@ -136,20 +141,23 @@ function MapPage() {
         <MapPanel reports={filtered} height={520} />
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="size-3 rounded-full" style={{ background: riskColor(10) }} /> Green
+            <span className="size-3 rounded-full" style={{ background: riskColor(10) }} />{" "}
+            {t("green")}
           </span>
           <span className="flex items-center gap-1">
-            <span className="size-3 rounded-full" style={{ background: riskColor(50) }} /> Yellow
+            <span className="size-3 rounded-full" style={{ background: riskColor(50) }} />{" "}
+            {t("yellow")}
           </span>
           <span className="flex items-center gap-1">
-            <span className="size-3 rounded-full" style={{ background: riskColor(80) }} /> Red
+            <span className="size-3 rounded-full" style={{ background: riskColor(80) }} />{" "}
+            {t("red")}
           </span>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Reported hazards</CardTitle>
+              <CardTitle className="text-base">{t("reportedHazards")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {filtered.slice(0, 20).map((r) => (
@@ -168,14 +176,14 @@ function MapPage() {
                 </div>
               ))}
               {filtered.length === 0 && (
-                <p className="text-sm text-muted-foreground">Nothing reported yet.</p>
+                <p className="text-sm text-muted-foreground">{t("nothingReported")}</p>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Alert log</CardTitle>
+              <CardTitle className="text-base">{t("alertLog")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {alerts.map((a) => (
@@ -191,7 +199,7 @@ function MapPage() {
                 </div>
               ))}
               {alerts.length === 0 && (
-                <p className="text-sm text-muted-foreground">No alerts raised yet.</p>
+                <p className="text-sm text-muted-foreground">{t("noAlerts")}</p>
               )}
             </CardContent>
           </Card>

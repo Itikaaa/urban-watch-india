@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
+import { hazardLabel, severityLabel } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-provider";
 
 export type MapReport = {
   id: string;
@@ -23,6 +25,7 @@ export default function HazardMap({
   height?: number;
   focus?: { lat: number; lng: number } | null;
 }) {
+  const { locale, t } = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
@@ -65,8 +68,8 @@ export default function HazardMap({
         fillOpacity: 0.55,
       })
         .bindPopup(
-          `<strong>${HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}</strong><br/>` +
-            `<span style="text-transform:capitalize">${r.severity} risk · ${r.risk_score}/100</span><br/>` +
+          `<strong>${hazardLabel(r.hazard_type, locale) || HAZARD_LABELS[r.hazard_type] || r.hazard_type}</strong><br/>` +
+            `<span>${t("riskBadge", { severity: severityLabel(r.severity, locale), score: r.risk_score })}</span><br/>` +
             `${r.address ? `<em>${r.address}</em><br/>` : ""}` +
             `${r.summary ?? ""}`,
         )
@@ -80,7 +83,7 @@ export default function HazardMap({
     } else if (points.length > 1) {
       map.fitBounds(L.latLngBounds(points).pad(0.25));
     }
-  }, [reports, focus]);
+  }, [reports, focus, locale, t]);
 
   return (
     <div ref={containerRef} style={{ height }} className="w-full rounded-xl border border-border" />
