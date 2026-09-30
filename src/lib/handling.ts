@@ -43,8 +43,8 @@ export function teamById(id: string | null | undefined): Team | null {
 }
 
 export function assignedTeamFor(report: {
-  assigned_team?: string | null;
-  authority_name?: string | null;
+  assigned_team?: string | null | undefined;
+  authority_name?: string | null | undefined;
   status: string;
   hazard_type: string;
 }): Team | null {
@@ -166,7 +166,32 @@ export function handlingStage(status: string) {
 }
 
 /** Same-issue reports within this distance are treated as duplicates. */
-export const DUPLICATE_METERS = 100;
+export const DUPLICATE_METERS = 120;
+/** Any open hazard this close is treated as the same spot. */
+export const SAME_SPOT_METERS = 70;
+
+const recentPins: { lat: number; lng: number; family: string; at: number }[] = [];
+
+export function noteRecentPin(lat: number, lng: number, hazardType: string) {
+  recentPins.push({
+    lat,
+    lng,
+    family: teamForHazard(hazardType).id,
+    at: Date.now(),
+  });
+}
+
+export function findRecentPin(lat: number, lng: number, hazardType: string) {
+  const family = teamForHazard(hazardType).id;
+  const now = Date.now();
+  for (const pin of recentPins) {
+    if (now - pin.at > 30 * 60 * 1000) continue;
+    const dist = metersBetween({ lat, lng }, { lat: pin.lat, lng: pin.lng });
+    if (dist <= SAME_SPOT_METERS) return pin;
+    if (pin.family === family && dist <= DUPLICATE_METERS) return pin;
+  }
+  return null;
+}
 
 export function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -187,13 +212,16 @@ export function findOpenDuplicate<
   },
 >(reports: T[], lat: number, lng: number, hazardType: string): T | null {
   const family = teamForHazard(hazardType).id;
+  let familyHit: T | null = null;
+  let spotHit: T | null = null;
   for (const report of reports) {
     if (handlingStage(report.status) === "done") continue;
     if (report.lat == null || report.lng == null) continue;
-    if (teamForHazard(report.hazard_type).id !== family) continue;
-    if (metersBetween({ lat, lng }, { lat: report.lat, lng: report.lng }) <= DUPLICATE_METERS) {
-      return report;
+    const dist = metersBetween({ lat, lng }, { lat: report.lat, lng: report.lng });
+    if (dist <= SAME_SPOT_METERS) spotHit = report;
+    if (teamForHazard(report.hazard_type).id === family && dist <= DUPLICATE_METERS) {
+      familyHit = report;
     }
   }
-  return null;
+  return familyHit ?? spotHit;
 }

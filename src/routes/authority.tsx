@@ -28,7 +28,6 @@ import { AuthCard, useAuth } from "@/lib/auth";
 import {
   assignedTeamFor,
   dueFromEta,
-  formatResolution,
   handlingStage,
   remainingRiskIsLow,
   resolutionHours,
@@ -38,6 +37,9 @@ import {
 import { sessionRole } from "@/lib/role";
 import { verifyRepair } from "@/lib/detect.functions";
 import { useLiveReports } from "@/hooks/use-live-reports";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { teamFocusLabel, teamNameLabel } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-provider";
 
 export const Route = createFileRoute("/authority")({
   head: () => ({
@@ -47,6 +49,7 @@ export const Route = createFileRoute("/authority")({
 });
 
 function AuthorityPage() {
+  const { t, locale } = useT();
   const { user, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -76,10 +79,10 @@ function AuthorityPage() {
     try {
       const updated = await updateReportHandling(report, { status: "assigned", team });
       putReport(updated);
-      toast.success(`Assigned to ${team.name} — visible on the reporter's progress.`);
+      toast.success(t("assignedVisible", { name: teamNameLabel(team.id, locale) }));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not assign this team.");
+      toast.error(err instanceof Error ? err.message : t("couldNotAssign"));
     } finally {
       setSavingId(null);
     }
@@ -88,7 +91,7 @@ function AuthorityPage() {
   async function allocateTime(report: ReportRow, hoursRaw: string) {
     const hours = Number(hoursRaw);
     if (!Number.isFinite(hours) || hours < 1) {
-      toast.error("Enter how many hours the team has to finish.");
+      toast.error(t("enterHours"));
       return;
     }
     setSavingId(report.id);
@@ -99,12 +102,14 @@ function AuthorityPage() {
         dueAt: due,
       });
       putReport(updated);
-      toast.success(
-        `Time set to ${formatResolution(Math.round(hours))} — updated for the reporter.`,
-      );
+      const duration =
+        Math.round(hours) <= 72
+          ? t("nHours", { n: Math.round(hours) })
+          : t("nDays", { n: Math.round((hours / 24) * 10) / 10 });
+      toast.success(t("timeSaved", { duration }));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save the time allocation.");
+      toast.error(err instanceof Error ? err.message : t("couldNotSaveTime"));
     } finally {
       setSavingId(null);
     }
@@ -124,8 +129,7 @@ function AuthorityPage() {
       });
       if (!remainingRiskIsLow(check)) {
         toast.error(
-          check.summary ||
-            `Remaining risk is ${Math.round(check.riskScore)}/100. Upload a clearer photo of the repaired place — it must score as low risk to close.`,
+          check.summary || t("remainingRiskHigh", { score: Math.round(check.riskScore) }),
         );
         return;
       }
@@ -138,12 +142,10 @@ function AuthorityPage() {
         afterRisk: check.riskScore,
       });
       putReport(updated);
-      toast.success(
-        `Remaining risk ${Math.round(check.riskScore)}/100 (low). Closed for the reporter.`,
-      );
+      toast.success(t("remainingRiskLow", { score: Math.round(check.riskScore) }));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not verify the repair photo.");
+      toast.error(err instanceof Error ? err.message : t("couldNotVerify"));
     } finally {
       setSavingId(null);
     }
@@ -152,12 +154,12 @@ function AuthorityPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        Checking your sign-in…
+        {t("checkingSignIn")}
       </div>
     );
   }
 
-  if (!user) return <AuthCard message="Sign in as the municipal authority." />;
+  if (!user) return <AuthCard message={t("authAuthorityMessage")} />;
 
   const open = reports.filter((report) => handlingStage(report.status) !== "done");
 
@@ -167,27 +169,23 @@ function AuthorityPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
           <div className="flex items-center gap-2">
             <Radar className="size-6 text-primary" />
-            <span className="text-lg font-bold tracking-tight">Municipal dashboard</span>
+            <span className="text-lg font-bold tracking-tight">{t("municipalDashboard")}</span>
           </div>
           <div className="flex items-center gap-2">
+            <LanguageSwitcher />
             <Link to="/map">
               <Button variant="secondary" size="sm">
-                Map
+                {t("map")}
               </Button>
             </Link>
             <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-              Sign out
+              {t("signOut")}
             </Button>
           </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl space-y-4 px-4 py-8">
-        <p className="text-sm text-muted-foreground">
-          Assign a team and allocate time here — both save immediately and then appear on the
-          reporter's incident list. To close an assigned issue, upload a new photo of the same
-          place. AI compares it with the original and closes the report only if remaining risk is
-          low.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("authorityHelp")}</p>
         <div className="grid gap-3 sm:grid-cols-4">
           {(["garbage", "pothole", "streetlight", "water"] as const).map((key) => {
             const team = teamForHazard(
@@ -205,8 +203,10 @@ function AuthorityPage() {
             return (
               <Card key={team.id}>
                 <CardContent className="pt-6">
-                  <div className="text-sm font-medium">{team.name}</div>
-                  <div className="text-xs text-muted-foreground">{team.focus}</div>
+                  <div className="text-sm font-medium">{teamNameLabel(team.id, locale)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {teamFocusLabel(team.id, locale)}
+                  </div>
                   <div className="mt-2 text-2xl font-bold">{count}</div>
                 </CardContent>
               </Card>
@@ -223,7 +223,9 @@ function AuthorityPage() {
             onClose={(image) => void closeWithProof(report, image)}
           />
         ))}
-        {reports.length === 0 && <p className="text-sm text-muted-foreground">No reports yet.</p>}
+        {reports.length === 0 && (
+          <p className="text-sm text-muted-foreground">{t("noReportsYet")}</p>
+        )}
       </main>
     </div>
   );
@@ -242,6 +244,7 @@ function AuthorityReportCard({
   onAllocate: (hours: string) => void;
   onClose: (image: string) => void;
 }) {
+  const { t, locale } = useT();
   const suggested = teamForHazard(report.hazard_type);
   const assigned = assignedTeamFor(report);
   const stage = handlingStage(report.status);
@@ -273,7 +276,9 @@ function AuthorityReportCard({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base">{assigned?.name ?? "Unassigned"}</CardTitle>
+        <CardTitle className="text-base">
+          {assigned ? teamNameLabel(assigned.id, locale) : t("unassigned")}
+        </CardTitle>
         <Badge variant="outline" className="capitalize">
           {stage}
         </Badge>
@@ -296,31 +301,32 @@ function AuthorityReportCard({
         {stage !== "done" && (
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2 rounded-lg border border-border p-3">
-              <Label>Assign field team</Label>
+              <Label>{t("assignFieldTeam")}</Label>
               <Select value={teamId} onValueChange={setTeamId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Choose a team" />
+                  <SelectValue placeholder={t("chooseTeam")} />
                 </SelectTrigger>
                 <SelectContent>
                   {Object.values(TEAMS).map((team) => (
                     <SelectItem key={team.id} value={team.id}>
-                      {team.name} — {team.focus}
+                      {teamNameLabel(team.id, locale)} — {teamFocusLabel(team.id, locale)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Suggested from the report: {suggested.name}. The reporter sees this only after you
-                assign.
+                {t("suggestedTeam", { name: teamNameLabel(suggested.id, locale) })}
               </p>
               <Button size="sm" disabled={busy} onClick={() => onAssign(teamId)}>
                 {assigned
-                  ? "Update assignment"
-                  : `Assign ${Object.values(TEAMS).find((t) => t.id === teamId)?.name ?? "team"}`}
+                  ? t("updateAssignment")
+                  : t("assignTeam", {
+                      name: teamNameLabel(teamId, locale),
+                    })}
               </Button>
             </div>
             <div className="space-y-2 rounded-lg border border-border p-3">
-              <Label htmlFor={`eta-${report.id}`}>Allocate time (hours)</Label>
+              <Label htmlFor={`eta-${report.id}`}>{t("allocateHours")}</Label>
               <Input
                 id={`eta-${report.id}`}
                 type="number"
@@ -329,8 +335,14 @@ function AuthorityReportCard({
                 onChange={(event) => setHours(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Suggested {formatResolution(resolutionHours(report.risk_score))} from risk. Saved
-                time is what the reporter sees.
+                {t("suggestedTime", {
+                  duration:
+                    resolutionHours(report.risk_score) <= 72
+                      ? t("nHours", { n: resolutionHours(report.risk_score) })
+                      : t("nDays", {
+                          n: Math.round((resolutionHours(report.risk_score) / 24) * 10) / 10,
+                        }),
+                })}
               </p>
               <Button
                 size="sm"
@@ -338,23 +350,19 @@ function AuthorityReportCard({
                 disabled={busy}
                 onClick={() => onAllocate(hours)}
               >
-                Save time allocation
+                {t("saveTime")}
               </Button>
             </div>
           </div>
         )}
         {(stage === "assigned" || Boolean(assigned)) && stage !== "done" && (
           <div className="space-y-2 rounded-lg border border-border p-3">
-            <Label>Photo of the same place after work</Label>
-            <p className="text-xs text-muted-foreground">
-              Upload a new picture of the reported location. AI compares it with the original report
-              photo and scores remaining risk. The issue closes only if that score is low (under
-              40/100).
-            </p>
+            <Label>{t("afterPhoto")}</Label>
+            <p className="text-xs text-muted-foreground">{t("afterPhotoHelp")}</p>
             <div className="grid gap-2 sm:grid-cols-2">
               {preview ? (
                 <div>
-                  <div className="mb-1 text-xs text-muted-foreground">Original report</div>
+                  <div className="mb-1 text-xs text-muted-foreground">{t("originalReport")}</div>
                   <img
                     src={preview}
                     alt=""
@@ -364,7 +372,7 @@ function AuthorityReportCard({
               ) : null}
               {proof ? (
                 <div>
-                  <div className="mb-1 text-xs text-muted-foreground">Recent photo</div>
+                  <div className="mb-1 text-xs text-muted-foreground">{t("recentPhoto")}</div>
                   <img
                     src={proof}
                     alt=""
@@ -392,7 +400,7 @@ function AuthorityReportCard({
               }}
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
-              Compare photos and close if low risk
+              {t("compareAndClose")}
             </Button>
           </div>
         )}

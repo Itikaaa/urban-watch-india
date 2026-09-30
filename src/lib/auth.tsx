@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Radar } from "lucide-react";
 import { toast } from "sonner";
 import { clearSessionRole, setSessionRole, type AppRole } from "@/lib/role";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { useT } from "@/lib/i18n-provider";
 
 type AuthContextValue = {
   user: User | null;
@@ -68,21 +70,19 @@ export function useAuth() {
   return value;
 }
 
-export function AuthCard({
-  message = "Sign in to scan streets and share reports on the live map.",
-}: {
-  message?: string;
-}) {
+export function AuthCard({ message }: { message?: string }) {
+  const { t } = useT();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [role, setRole] = useState<AppRole>("user");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const description = message ?? t("authDefaultMessage");
 
   async function submit() {
     if (!email.trim() || password.length < 6) {
-      toast.error("Enter an email and a password of at least 6 characters.");
+      toast.error(t("enterEmailPassword"));
       return;
     }
     setBusy(true);
@@ -98,20 +98,16 @@ export function AuthCard({
         });
         if (error) throw error;
         if (!data.session) {
-          toast.success("Check your email to confirm your account, then sign in.");
+          toast.success(t("checkEmail"));
           return;
         }
       }
       setSessionRole(role);
       void supabase.auth.updateUser({ data: { role } });
-      toast.success(role === "authority" ? "Signed in as municipal authority." : "Signed in.");
+      toast.success(role === "authority" ? t("signedInAuthority") : t("signedIn"));
       if (role === "authority") void navigate({ to: "/authority" });
     } catch {
-      toast.error(
-        mode === "signin"
-          ? "Sign-in failed. Check your email and password."
-          : "Could not create the account.",
-      );
+      toast.error(mode === "signin" ? t("signInFailed") : t("couldNotCreateAccount"));
     } finally {
       setBusy(false);
     }
@@ -121,12 +117,15 @@ export function AuthCard({
     <div className="flex min-h-[70vh] items-center justify-center px-4 py-12">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <div className="mb-2 flex items-center gap-2 text-primary">
-            <Radar className="size-6" />
-            <span className="font-bold tracking-tight">SadakSafe</span>
+          <div className="mb-2 flex items-center justify-between gap-2 text-primary">
+            <span className="flex items-center gap-2">
+              <Radar className="size-6" />
+              <span className="font-bold tracking-tight">{t("brand")}</span>
+            </span>
+            <LanguageSwitcher />
           </div>
-          <CardTitle>{mode === "signin" ? "Sign in to continue" : "Create your account"}</CardTitle>
-          <CardDescription>{message}</CardDescription>
+          <CardTitle>{mode === "signin" ? t("signInContinue") : t("createAccount")}</CardTitle>
+          <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
@@ -135,25 +134,25 @@ export function AuthCard({
               variant={role === "user" ? "default" : "secondary"}
               onClick={() => setRole("user")}
             >
-              User
+              {t("user")}
             </Button>
             <Button
               type="button"
               variant={role === "authority" ? "default" : "secondary"}
               onClick={() => setRole("authority")}
             >
-              Municipal authority
+              {t("municipalAuthority")}
             </Button>
           </div>
           <Input
             type="email"
-            placeholder="Email address"
+            placeholder={t("email")}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
           <Input
             type="password"
-            placeholder="Password"
+            placeholder={t("password")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => {
@@ -161,14 +160,14 @@ export function AuthCard({
             }}
           />
           <Button className="w-full" onClick={() => void submit()} disabled={busy}>
-            {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
+            {busy ? t("pleaseWait") : mode === "signin" ? t("signIn") : t("createAccount")}
           </Button>
           <Button
             variant="ghost"
             className="w-full"
             onClick={() => setMode((current) => (current === "signin" ? "signup" : "signin"))}
           >
-            {mode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
+            {mode === "signin" ? t("newHere") : t("haveAccount")}
           </Button>
         </CardContent>
       </Card>

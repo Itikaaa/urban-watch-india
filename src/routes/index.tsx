@@ -49,9 +49,24 @@ import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
 import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
-import { findOpenDuplicate, shouldAutoReport, teamForHazard } from "@/lib/handling";
+import {
+  findOpenDuplicate,
+  findRecentPin,
+  noteRecentPin,
+  shouldAutoReport,
+  teamForHazard,
+} from "@/lib/handling";
 import { sessionRole } from "@/lib/role";
 import { IssueProgress } from "@/components/IssueProgress";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import {
+  hazardLabel,
+  severityLabel,
+  sightLabel,
+  teamFocusLabel,
+  type MessageKey,
+} from "@/lib/i18n";
+import { useT } from "@/lib/i18n-provider";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -171,6 +186,7 @@ function combineDetection(local: Detection, ai: Detection): Detection {
 }
 
 function Home() {
+  const { t, locale } = useT();
   const { user, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -194,7 +210,6 @@ function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const placeRef = useRef<Place | null>(null);
   placeRef.current = place;
-  const recentReports = useRef<Map<string, number>>(new Map());
   const autoLock = useRef(false);
   const fileLiveRef = useRef<(detection: Detection, image: string | null) => Promise<void>>(
     async () => undefined,
@@ -240,7 +255,7 @@ function Home() {
       setCameraOn(true);
       void readCurrentLocation();
     } catch {
-      toast.error("Camera access was blocked. Allow the camera, or use the photo tab.");
+      toast.error(t("cameraBlocked"));
     }
   }
 
@@ -249,13 +264,13 @@ function Home() {
     try {
       return await analyzeFrame({ data: { image, hint } });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Analysis failed");
+      toast.error(err instanceof Error ? err.message : t("analysisFailed"));
       return null;
     } finally {
       setAnalyzing(false);
       setProgress("");
     }
-  }, []);
+  }, [t]);
 
   const scanLiveFrame = useCallback(async () => {
     const video = videoRef.current;
@@ -266,12 +281,12 @@ function Home() {
     setDetection(local);
     const ai = await analyze(frame);
     if (ai) setDetection(combineDetection(local, ai));
-    else if (!local.items.length) toast("Nothing in this frame.");
-  }, [analyze, sightsRef]);
+    else if (!local.items.length) toast(t("nothingInFrame"));
+  }, [analyze, sightsRef, t]);
 
   async function readCurrentLocation() {
     if (!navigator.geolocation) {
-      toast.error("This device cannot share its location.");
+      toast.error(t("noDeviceLocation"));
       return null;
     }
     return new Promise<Place | null>((resolve) => {
@@ -281,7 +296,7 @@ function Home() {
           let next: Place;
           try {
             const info = await reverseGeocode({ data: { lat: latitude, lng: longitude } });
-            next = { ...info, origin: "Live GPS" };
+            next = { ...info, origin: "originLiveGps" };
           } catch {
             next = {
               lat: latitude,
@@ -290,7 +305,7 @@ function Home() {
               road: null,
               city: null,
               state: null,
-              origin: "Live GPS",
+              origin: "originLiveGps",
             };
           }
           placeRef.current = next;
@@ -298,7 +313,7 @@ function Home() {
           resolve(next);
         },
         () => {
-          toast.error("Location was blocked — type the place below instead.");
+          toast.error(t("locationBlocked"));
           resolve(null);
         },
         { enableHighAccuracy: true, timeout: 12000 },
@@ -311,12 +326,12 @@ function Home() {
     try {
       const info = await geocodePlace({ data: { query } });
       if (!info) {
-        toast.error("Could not find that place on the map.");
+        toast.error(t("placeNotFound"));
         return;
       }
       setPlace({ ...info, origin });
     } catch {
-      toast.error("Location lookup failed. Try again.");
+      toast.error(t("locationLookupFailed"));
     }
   }
 
@@ -330,8 +345,8 @@ function Home() {
     if (gps) {
       try {
         const info = await reverseGeocode({ data: { lat: gps.lat, lng: gps.lng } });
-        setPlace({ ...info, origin: "Photo GPS tag" });
-        toast.success("Location read from the photo's GPS tag.");
+        setPlace({ ...info, origin: "originPhotoGps" });
+        toast.success(t("locationReadGps"));
       } catch {
         setPlace({
           lat: gps.lat,
@@ -340,7 +355,7 @@ function Home() {
           road: null,
           city: null,
           state: null,
-          origin: "Photo GPS tag",
+          origin: "originPhotoGps",
         });
       }
     }
@@ -357,21 +372,21 @@ function Home() {
         return sightsToDetection(found);
       });
     } catch {
-      toast.error("Could not read objects in this photo.");
+      toast.error(t("couldNotReadPhoto"));
     }
     setDetection(local);
     const result = await analyze(dataUrl);
     const merged = result ? combineDetection(local, result) : local;
     setDetection(merged);
     if (!gps && merged.locationGuess?.text) {
-      await applyManualLocation(merged.locationGuess.text, "Guessed from the photo");
+      await applyManualLocation(merged.locationGuess.text, "originGuessedPhoto");
     }
   }
 
   async function onVideo(file: File) {
     setDetection(null);
     setAnalyzing(true);
-    setProgress("Reading the video…");
+    setProgress(t("readingVideo"));
     try {
       const url = URL.createObjectURL(file);
       const video = document.createElement("video");
@@ -411,12 +426,12 @@ function Home() {
           }
         });
       } catch {
-        toast.error("Could not read objects in this video.");
+        toast.error(t("couldNotReadVideo"));
       }
       URL.revokeObjectURL(url);
 
       if (!bestRaw || !bestMarked) {
-        toast.error("No frame could be checked from this video.");
+        toast.error(t("noVideoFrame"));
         return;
       }
       setPreview(bestMarked);
@@ -425,10 +440,10 @@ function Home() {
       const merged = ai ? combineDetection(bestLocal, ai) : bestLocal;
       setDetection(merged);
       if (merged.locationGuess?.text && !place) {
-        await applyManualLocation(merged.locationGuess.text, "Guessed from the video");
+        await applyManualLocation(merged.locationGuess.text, "originGuessedVideo");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Video check failed");
+      toast.error(err instanceof Error ? err.message : t("videoFailed"));
     } finally {
       setAnalyzing(false);
       setProgress("");
@@ -445,23 +460,40 @@ function Home() {
     resetForm?: boolean;
   }) {
     if (!input.located.lat || !input.located.lng) {
-      toast.error("Add a location before submitting.");
+      toast.error(t("addLocation"));
       return false;
     }
-    const duplicate = await findOpenDuplicateReport(
-      input.located.lat,
-      input.located.lng,
-      input.detection.primaryType,
-      reportsRef.current,
-    );
+    let duplicate =
+      findOpenDuplicate(
+        reportsRef.current,
+        input.located.lat,
+        input.located.lng,
+        input.detection.primaryType,
+      ) || findRecentPin(input.located.lat, input.located.lng, input.detection.primaryType);
+    if (!duplicate) {
+      try {
+        duplicate = await findOpenDuplicateReport(
+          input.located.lat,
+          input.located.lng,
+          input.detection.primaryType,
+          reportsRef.current,
+        );
+      } catch {
+        duplicate = null;
+      }
+    }
     if (duplicate) {
+      noteRecentPin(input.located.lat, input.located.lng, input.detection.primaryType);
       if (input.source !== "live") {
-        toast("This issue is already reported at this location.", {
-          description: `An open ${teamForHazard(input.detection.primaryType).focus.toLowerCase()} report already covers this spot.`,
+        toast(t("alreadyReported"), {
+          description: t("alreadyReportedDetail", {
+            focus: teamFocusLabel(
+              teamForHazard(input.detection.primaryType).id,
+              locale,
+            ).toLowerCase(),
+          }),
         });
       }
-      const key = `${teamForHazard(input.detection.primaryType).id}:${input.located.lat.toFixed(4)}:${input.located.lng.toFixed(4)}`;
-      recentReports.current.set(key, Date.now());
       return false;
     }
     setSubmitting(true);
@@ -471,7 +503,7 @@ function Home() {
         try {
           imagePath = await uploadHazardImage(input.image);
         } catch {
-          toast("Photo could not be saved — sending the report without it.");
+          toast(t("photoNotSaved"));
         }
       }
 
@@ -508,6 +540,8 @@ function Home() {
         .select()
         .single();
       if (error) throw error;
+      noteRecentPin(input.located.lat, input.located.lng, input.detection.primaryType);
+      reportsRef.current = [data as (typeof reportsRef.current)[number], ...reportsRef.current];
 
       const roadHazard = ["pothole", "damaged_road", "open_manhole", "broken_footpath"].includes(
         input.detection.primaryType,
@@ -529,7 +563,7 @@ function Home() {
         if (input.announce) setAlertInfo({ authority, road: roadName, message });
       }
 
-      toast.success("Reported on the live map.");
+      toast.success(t("reportedOnMap"));
       if (input.resetForm !== false) {
         setDetection(null);
         setPreview(null);
@@ -538,7 +572,7 @@ function Home() {
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
       return true;
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not submit the report");
+      toast.error(err instanceof Error ? err.message : t("submitFailed"));
       return false;
     } finally {
       setSubmitting(false);
@@ -548,7 +582,7 @@ function Home() {
   async function submitReport() {
     if (!detection) return;
     if (!place?.lat || !place.lng) {
-      toast.error("Add a location before submitting.");
+      toast.error(t("addLocation"));
       return;
     }
     await publishReport({
@@ -582,7 +616,7 @@ function Home() {
     setPreview(marked);
 
     if (merged.riskScore <= 70) {
-      toast(`Risk ${Math.round(merged.riskScore)}%. Photo kept here.`);
+      toast(t("riskKeptHere", { n: Math.round(merged.riskScore) }));
       return;
     }
     if (!located?.lat || !located.lng) return;
@@ -598,6 +632,8 @@ function Home() {
 
   async function fileLive(detection: Detection, image: string | null) {
     if (!shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)) return;
+    if (image) setPreview(image);
+    setDetection(detection);
     if (autoLock.current) return;
     autoLock.current = true;
     try {
@@ -606,14 +642,13 @@ function Home() {
           ? placeRef.current
           : await readCurrentLocation();
       if (!located?.lat || !located.lng) return;
-      const key = `${teamForHazard(detection.primaryType).id}:${located.lat.toFixed(4)}:${located.lng.toFixed(4)}`;
-      const now = Date.now();
-      if ((recentReports.current.get(key) ?? 0) > now - 90_000) return;
-      if (findOpenDuplicate(reportsRef.current, located.lat, located.lng, detection.primaryType)) {
-        recentReports.current.set(key, now);
+      if (
+        findRecentPin(located.lat, located.lng, detection.primaryType) ||
+        findOpenDuplicate(reportsRef.current, located.lat, located.lng, detection.primaryType)
+      ) {
+        noteRecentPin(located.lat, located.lng, detection.primaryType);
         return;
       }
-      recentReports.current.set(key, now);
       await publishReport({
         detection,
         located,
@@ -670,7 +705,7 @@ function Home() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        Checking your sign-in…
+        {t("checkingSignIn")}
       </div>
     );
   }
@@ -682,7 +717,7 @@ function Home() {
   if (sessionRole() === "authority") {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        Opening dashboard…
+        {t("openingDashboard")}
       </div>
     );
   }
@@ -693,19 +728,20 @@ function Home() {
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4">
           <div className="flex items-center gap-2">
             <Radar className="size-6 text-primary" />
-            <span className="text-lg font-bold tracking-tight">SadakSafe</span>
+            <span className="text-lg font-bold tracking-tight">{t("brand")}</span>
             <Badge variant="secondary" className="ml-1">
-              India
+              {t("india")}
             </Badge>
           </div>
           <nav className="flex items-center gap-2">
+            <LanguageSwitcher />
             <Link to="/map">
               <Button variant="secondary" size="sm">
-                <MapPin className="size-4" /> Live risk map
+                <MapPin className="size-4" /> {t("liveRiskMap")}
               </Button>
             </Link>
             <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-              Sign out
+              {t("signOut")}
             </Button>
           </nav>
         </div>
@@ -715,19 +751,19 @@ function Home() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Scan</CardTitle>
+              <CardTitle className="text-base">{t("scan")}</CardTitle>
             </CardHeader>
             <CardContent>
               <Tabs value={tab} onValueChange={setTab}>
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="live">
-                    <Camera className="mr-1 size-4" /> Live
+                    <Camera className="mr-1 size-4" /> {t("live")}
                   </TabsTrigger>
                   <TabsTrigger value="photo">
-                    <ImageIcon className="mr-1 size-4" /> Photo
+                    <ImageIcon className="mr-1 size-4" /> {t("photo")}
                   </TabsTrigger>
                   <TabsTrigger value="video">
-                    <Video className="mr-1 size-4" /> Video
+                    <Video className="mr-1 size-4" /> {t("video")}
                   </TabsTrigger>
                 </TabsList>
 
@@ -760,26 +796,26 @@ function Home() {
                                       : "text-white"
                             }`}
                           >
-                            {group.label} {group.count}
+                            {sightLabel(group.kind, group.label, locale)} {group.count}
                           </span>
                         ))}
                       </div>
                     )}
                     {cameraOn && detectorStatus === "loading" && (
                       <div className="absolute left-2 top-2 rounded bg-black/75 px-2 py-0.5 text-xs text-white">
-                        Loading
+                        {t("loading")}
                       </div>
                     )}
                     {cameraOn && detectorStatus === "error" && (
                       <div className="absolute left-2 top-2 rounded bg-black/75 px-2 py-0.5 text-xs text-white">
-                        Detector unavailable
+                        {t("detectorUnavailable")}
                       </div>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {!cameraOn ? (
                       <Button onClick={startCamera}>
-                        <Camera className="size-4" /> Start camera
+                        <Camera className="size-4" /> {t("startCamera")}
                       </Button>
                     ) : (
                       <>
@@ -789,17 +825,17 @@ function Home() {
                           ) : (
                             <Radar className="size-4" />
                           )}
-                          Capture
+                          {t("capture")}
                         </Button>
                         <Button
                           variant="secondary"
                           onClick={() => void captureGeoPhoto()}
                           disabled={analyzing || submitting}
                         >
-                          <MapPin className="size-4" /> Geo photo
+                          <MapPin className="size-4" /> {t("geoPhoto")}
                         </Button>
                         <Button variant="ghost" onClick={stopCamera}>
-                          Stop
+                          {t("stop")}
                         </Button>
                       </>
                     )}
@@ -831,7 +867,7 @@ function Home() {
 
               {analyzing && (
                 <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" /> {progress || "Checking"}
+                  <Loader2 className="size-4 animate-spin" /> {progress || t("checking")}
                 </div>
               )}
             </CardContent>
@@ -839,39 +875,41 @@ function Home() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Location</CardTitle>
+              <CardTitle className="text-base">{t("location")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => void readCurrentLocation()}>
-                  <MapPin className="size-4" /> Use my live location
+                  <MapPin className="size-4" /> {t("useLiveLocation")}
                 </Button>
               </div>
               <div className="flex gap-2">
                 <Input
-                  placeholder="Or type the road, area and city"
+                  placeholder={t("locationPlaceholder")}
                   value={manual}
                   onChange={(e) => setManual(e.target.value)}
                 />
                 <Button
                   variant="secondary"
-                  onClick={() => void applyManualLocation(manual, "Typed by reporter")}
+                  onClick={() => void applyManualLocation(manual, "originTyped")}
                 >
-                  Find
+                  {t("find")}
                 </Button>
               </div>
               {place ? (
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-                  <div className="font-medium">{place.address ?? "Located"}</div>
+                  <div className="font-medium">{place.address ?? t("located")}</div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {place.origin}
+                    {place.origin.startsWith("origin")
+                      ? t(place.origin as MessageKey)
+                      : place.origin}
                     {place.lat && place.lng
                       ? ` · ${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`
                       : ""}
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">No location yet.</p>
+                <p className="text-xs text-muted-foreground">{t("noLocationYet")}</p>
               )}
             </CardContent>
           </Card>
@@ -880,7 +918,7 @@ function Home() {
             <Card className="border-primary/50">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <AlertTriangle className="size-4 text-primary" /> Found
+                  <AlertTriangle className="size-4 text-primary" /> {t("found")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -888,11 +926,16 @@ function Home() {
                   <img src={preview} alt="" className="w-full rounded-lg border border-border" />
                 )}
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge>{HAZARD_LABELS[detection.primaryType] ?? detection.primaryType}</Badge>
-                  <Badge variant="outline" className="capitalize">
-                    {severity} risk · {Math.round(detection.riskScore)}/100
+                  <Badge>{hazardLabel(detection.primaryType, locale)}</Badge>
+                  <Badge variant="outline">
+                    {t("riskBadge", {
+                      severity: severityLabel(severity, locale),
+                      score: Math.round(detection.riskScore),
+                    })}
                   </Badge>
-                  <Badge variant="secondary">{Math.round(detection.confidence * 100)}% sure</Badge>
+                  <Badge variant="secondary">
+                    {t("sure", { n: Math.round(detection.confidence * 100) })}
+                  </Badge>
                   {totalItems > 0 && <Badge variant="secondary">{totalItems}</Badge>}
                 </div>
                 {detection.items.length > 0 && (
@@ -911,7 +954,7 @@ function Home() {
                   </ul>
                 )}
                 <Textarea
-                  placeholder="Note"
+                  placeholder={t("note")}
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                 />
@@ -922,10 +965,10 @@ function Home() {
                     ) : (
                       <Send className="size-4" />
                     )}
-                    Put on map
+                    {t("putOnMap")}
                   </Button>
                   <Button variant="ghost" onClick={() => setDetection(null)}>
-                    Discard
+                    {t("discard")}
                   </Button>
                 </div>
               </CardContent>
@@ -936,7 +979,7 @@ function Home() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Live risk map</CardTitle>
+              <CardTitle className="text-base">{t("liveRiskMap")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <MapPanel
@@ -946,13 +989,16 @@ function Home() {
               />
               <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#22c55e" }} /> Green
+                  <span className="size-3 rounded-full" style={{ background: "#22c55e" }} />{" "}
+                  {t("green")}
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#eab308" }} /> Yellow
+                  <span className="size-3 rounded-full" style={{ background: "#eab308" }} />{" "}
+                  {t("yellow")}
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} /> Red
+                  <span className="size-3 rounded-full" style={{ background: "#dc2626" }} />{" "}
+                  {t("red")}
                 </span>
               </div>
             </CardContent>
@@ -960,7 +1006,7 @@ function Home() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Incident report</CardTitle>
+              <CardTitle className="text-base">{t("incidentReport")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {reports.slice(0, 6).map((r) => (
@@ -979,7 +1025,7 @@ function Home() {
                 </div>
               ))}
               {reports.length === 0 && (
-                <p className="text-sm text-muted-foreground">No reports yet.</p>
+                <p className="text-sm text-muted-foreground">{t("noReportsYet")}</p>
               )}
             </CardContent>
           </Card>
@@ -990,10 +1036,10 @@ function Home() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="size-5 text-primary" /> Alert raised
+              <CheckCircle2 className="size-5 text-primary" /> {t("alertRaised")}
             </DialogTitle>
             <DialogDescription>
-              This hazard was logged against the body responsible for {alertInfo?.road}.
+              {t("alertLogged", { road: alertInfo?.road ?? "" })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-sm">
@@ -1002,7 +1048,7 @@ function Home() {
               <div className="text-muted-foreground">{alertInfo?.authority.dept}</div>
               {alertInfo?.authority.helpline && (
                 <div className="mt-1 text-muted-foreground">
-                  Helpline: {alertInfo.authority.helpline}
+                  {t("helpline", { n: alertInfo.authority.helpline })}
                 </div>
               )}
               {alertInfo?.authority.contact && (
@@ -1012,7 +1058,7 @@ function Home() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open the official complaint portal
+                  {t("openPortal")}
                 </a>
               )}
             </div>

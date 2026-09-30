@@ -1,5 +1,7 @@
 import { HAZARD_LABELS } from "@/lib/authorities";
-import { assignedTeamFor, formatResolution, handlingStage } from "@/lib/handling";
+import { assignedTeamFor, handlingStage } from "@/lib/handling";
+import { hazardLabel, teamFocusLabel, teamNameLabel } from "@/lib/i18n";
+import { useT } from "@/lib/i18n-provider";
 
 export function IssueProgress({
   hazardType,
@@ -22,45 +24,53 @@ export function IssueProgress({
   address?: string | null;
   verifySummary?: string | null;
 }) {
+  const { t, locale } = useT();
   const assigned = assignedTeamFor({
-    assigned_team: assignedTeam,
-    authority_name: authorityName,
+    assigned_team: assignedTeam ?? null,
+    authority_name: authorityName ?? null,
     status,
     hazard_type: hazardType,
   });
   const stage = handlingStage(status);
   const hasTime = etaHours != null || Boolean(dueAt);
-  const dueLabel = dueAt ? new Date(dueAt).toLocaleString() : null;
-  const steps: { title: string; detail?: string | null }[] = [{ title: "Reported successfully" }];
+  const dueLabel = dueAt
+    ? new Date(dueAt).toLocaleString(locale === "hi" ? "hi-IN" : "en-IN")
+    : null;
+  const hours = etaHours ?? 0;
+  const duration =
+    hours <= 72 ? t("nHours", { n: hours }) : t("nDays", { n: Math.round((hours / 24) * 10) / 10 });
+  const steps: { title: string; detail?: string | null }[] = [{ title: t("reportedSuccessfully") }];
   if (assigned) {
     steps.push({
-      title: `Assigned to ${assigned.name}`,
-      detail: assigned.focus,
+      title: t("assignedTo", { name: teamNameLabel(assigned.id, locale) }),
+      detail: teamFocusLabel(assigned.id, locale),
     });
   }
   if (hasTime) {
     steps.push({
-      title: `Completes in ${formatResolution(etaHours ?? 0)}`,
+      title: t("completesIn", { duration }),
       detail: dueLabel,
     });
   }
   if (stage === "done") {
     steps.push({
-      title: "Done and closed",
-      detail: verifySummary ?? "AI confirmed the street no longer shows the reported issue.",
+      title: t("doneClosed"),
+      detail: verifySummary ?? t("doneDefault"),
     });
   }
 
   return (
     <div className="space-y-3">
       <div>
-        <div className="font-medium">{HAZARD_LABELS[hazardType] ?? hazardType}</div>
+        <div className="font-medium">
+          {hazardLabel(hazardType, locale) || HAZARD_LABELS[hazardType] || hazardType}
+        </div>
         {address ? <div className="text-xs text-muted-foreground">{address}</div> : null}
         {summary ? <p className="mt-1 text-sm text-muted-foreground">{summary}</p> : null}
       </div>
       <ol className="space-y-2">
         {steps.map((step, index) => (
-          <li key={step.title} className="flex gap-2 text-sm">
+          <li key={`${index}-${step.title}`} className="flex gap-2 text-sm">
             <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground">
               {index + 1}
             </span>
@@ -74,10 +84,7 @@ export function IssueProgress({
         ))}
       </ol>
       {steps.length === 1 ? (
-        <p className="text-xs text-muted-foreground">
-          Team assignment, time, and completion will show here only after the municipal authority
-          updates this report.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("waitingAuthority")}</p>
       ) : null}
     </div>
   );

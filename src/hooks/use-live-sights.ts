@@ -20,6 +20,7 @@ export function useLiveSights(videoRef: RefObject<HTMLVideoElement | null>, acti
     let frame = 0;
     let busy = false;
     let lastRun = 0;
+    let lastEmit = 0;
     let lastTimestamp = 0;
     let lastCounts = "";
     setStatus("loading");
@@ -46,9 +47,11 @@ export function useLiveSights(videoRef: RefObject<HTMLVideoElement | null>, acti
               const counts = groupSights(next)
                 .map((group) => `${group.label}:${group.count}`)
                 .join("|");
-              if (counts !== lastCounts) {
+              const hasGarbage = next.some((sight) => sight.kind === "garbage");
+              if (counts !== lastCounts || (hasGarbage && now - lastEmit > 2500)) {
                 lastCounts = counts;
-                setSights(next);
+                lastEmit = now;
+                setSights(next.slice());
               }
               drawSights(canvas, video.videoWidth, video.videoHeight, next);
             }

@@ -99,10 +99,14 @@
   --risk-medium: oklch(0.82 0.16 95);
   --risk-high: oklch(0.72 0.18 55);
   --risk-critical: oklch(0.6 0.22 27);
-  --gradient-hero: linear-gradient(150deg, oklch(0.22 0.04 252) 0%, oklch(0.26 0.06 265) 55%, oklch(0.3 0.08 60) 100%);
+  --gradient-hero: linear-gradient(
+    150deg,
+    oklch(0.22 0.04 252) 0%,
+    oklch(0.26 0.06 265) 55%,
+    oklch(0.3 0.08 60) 100%
+  );
   --shadow-panel: 0 20px 50px -25px oklch(0 0 0 / 0.8);
 }
-
 
 .dark {
   --background: oklch(0.129 0.042 264.695);
@@ -147,5 +151,6 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: "Noto Sans", "Noto Sans Devanagari", ui-sans-serif, system-ui, sans-serif;
   }
 }
