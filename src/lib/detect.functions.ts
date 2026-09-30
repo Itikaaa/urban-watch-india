@@ -33,14 +33,16 @@ Return ONLY minified JSON:
 
 hazardDetected is true only for a street hazard, including garbage. A person or phone alone is not a hazard: riskScore 0. Open manhole or deep pothole 80+, heavy water 60-85, large garbage 45-70, scattered clutter 15-35. If nothing is visible, hazardDetected false, riskScore 0, items []. If no place is visible, locationGuess null.`;
 
-const VERIFY_SYSTEM = `You inspect a photo taken after a municipal street repair.
+const VERIFY_SYSTEM = `You compare two street photos of the same place: the original hazard report, then a later photo after municipal work.
 
-Decide whether any street hazard is still visible. Look for potholes, damaged road, garbage piles, waterlogging, broken streetlights, open manholes, debris, or other street hazards.
+Score remaining street risk in the RECENT photo only (0-100). Compare it with the original so you can tell if the reported issue improved.
+
+Look for remaining potholes, damaged road, garbage piles, waterlogging, broken streetlights, open manholes, debris, or other street hazards.
 
 Return ONLY minified JSON:
-{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|other","riskScore":0-100,"confidence":0-1,"summary":"short verdict","items":[{"type":"...","label":"...","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":null}
+{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|other","riskScore":0-100,"confidence":0-1,"summary":"short comparison and remaining-risk verdict","items":[{"type":"...","label":"...","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":null}
 
-hazardDetected is true only if a street hazard is still clearly visible. A repaired or clear road, ordinary traffic, wet but drained pavement, or people and vehicles are not hazards: hazardDetected false, riskScore 0, items [].`;
+riskScore is the remaining risk in the recent photo. Below 40 is low. If the original issue is gone or only a faint trace remains, riskScore below 40, hazardDetected false. If the recent photo still clearly shows the same or a similar street hazard, riskScore 40 or higher and hazardDetected true.`;
 
 function safeJson(text: string): Detection | null {
   const cleaned = text
@@ -82,9 +84,18 @@ function safeJson(text: string): Detection | null {
   }
 }
 
-async function completeVision(system: string, userText: string, image: string): Promise<Detection> {
+async function completeVision(
+  system: string,
+  userText: string,
+  images: string[],
+): Promise<Detection> {
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) throw new Error("AI is not configured on this project.");
+
+  const imageParts = images.filter(Boolean).map((url) => ({
+    type: "image_url" as const,
+    image_url: { url },
+  }));
 
   const res = await fetch(GATEWAY, {
     method: "POST",
@@ -98,10 +109,7 @@ async function completeVision(system: string, userText: string, image: string): 
         { role: "system", content: system },
         {
           role: "user",
-          content: [
-            { type: "text", text: userText },
-            { type: "image_url", image_url: { url: image } },
-          ],
+          content: [{ type: "text", text: userText }, ...imageParts],
         },
       ],
     }),
@@ -138,7 +146,7 @@ export const analyzeFrame = createServerFn({ method: "POST" })
       data.hint
         ? `Inspect this street image. Context from the reporter: ${data.hint}`
         : "Inspect this street image and list every hazard, however small.",
-      data.image,
+      [data.image],
     );
   });
 
@@ -147,17 +155,23 @@ export const verifyRepair = createServerFn({ method: "POST" })
     z
       .object({
         image: z.string().min(32),
+        originalImage: z.string().min(32).optional(),
         originalType: z.string().optional(),
+        originalRisk: z.number().optional(),
       })
       .parse(data),
   )
   .handler(async ({ data }): Promise<Detection> => {
-    const original = data.originalType ? ` The original report was for ${data.originalType}.` : "";
-    return completeVision(
-      VERIFY_SYSTEM,
-      `This is a completion photo of a repaired street.${original} Say if any street hazard remains.`,
-      data.image,
-    );
+    const original = data.originalType
+      ? ` The original report was for ${data.originalType}${
+          data.originalRisk != null ? ` with risk ${Math.round(data.originalRisk)}/100` : ""
+        }.`
+      : "";
+    const images = data.originalImage ? [data.originalImage, data.image] : [data.image];
+    const prompt = data.originalImage
+      ? `Image 1 is the original report photo. Image 2 is a later photo of the same place after work.${original} Compare them and score remaining risk in image 2.`
+      : `This is a later photo of the reported place after work.${original} Score remaining street risk.`;
+    return completeVision(VERIFY_SYSTEM, prompt, images);
   });
 
 export type PlaceInfo = {
