@@ -42,14 +42,14 @@ import {
   severityFromScore,
   type Authority,
 } from "@/lib/authorities";
-import { uploadHazardImage } from "@/lib/reports";
+import { findOpenDuplicateReport, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveReports } from "@/hooks/use-live-reports";
 import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
 import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
-import { shouldAutoReport } from "@/lib/handling";
+import { findOpenDuplicate, shouldAutoReport, teamForHazard } from "@/lib/handling";
 import { sessionRole } from "@/lib/role";
 import { IssueProgress } from "@/components/IssueProgress";
 
@@ -207,6 +207,8 @@ function Home() {
   } = useLiveSights(videoRef, cameraOn && tab === "live");
 
   const { data: reports = [] } = useLiveReports(200, Boolean(user));
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -446,6 +448,22 @@ function Home() {
       toast.error("Add a location before submitting.");
       return false;
     }
+    const duplicate = await findOpenDuplicateReport(
+      input.located.lat,
+      input.located.lng,
+      input.detection.primaryType,
+      reportsRef.current,
+    );
+    if (duplicate) {
+      if (input.source !== "live") {
+        toast("This issue is already reported at this location.", {
+          description: `An open ${teamForHazard(input.detection.primaryType).focus.toLowerCase()} report already covers this spot.`,
+        });
+      }
+      const key = `${teamForHazard(input.detection.primaryType).id}:${input.located.lat.toFixed(4)}:${input.located.lng.toFixed(4)}`;
+      recentReports.current.set(key, Date.now());
+      return false;
+    }
     setSubmitting(true);
     try {
       let imagePath: string | null = null;
@@ -588,9 +606,13 @@ function Home() {
           ? placeRef.current
           : await readCurrentLocation();
       if (!located?.lat || !located.lng) return;
-      const key = `${detection.primaryType}:${located.lat.toFixed(3)}:${located.lng.toFixed(3)}`;
+      const key = `${teamForHazard(detection.primaryType).id}:${located.lat.toFixed(4)}:${located.lng.toFixed(4)}`;
       const now = Date.now();
       if ((recentReports.current.get(key) ?? 0) > now - 90_000) return;
+      if (findOpenDuplicate(reportsRef.current, located.lat, located.lng, detection.primaryType)) {
+        recentReports.current.set(key, now);
+        return;
+      }
       recentReports.current.set(key, now);
       await publishReport({
         detection,
@@ -938,7 +960,7 @@ function Home() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Handling</CardTitle>
+              <CardTitle className="text-base">Incident report</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {reports.slice(0, 6).map((r) => (
