@@ -218,6 +218,8 @@ export const HAZARD_LABELS: Record<string, string> = {
   person: "Person",
   phone: "Phone",
   vehicle: "Vehicle",
+  streetlight: "Broken streetlight",
+  broken_streetlight: "Broken streetlight",
   debris: "Construction debris",
   open_manhole: "Open manhole / drain",
   broken_footpath: "Broken footpath",

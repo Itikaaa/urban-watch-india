@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -48,6 +48,9 @@ import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
 import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
+import { shouldAutoReport } from "@/lib/handling";
+import { sessionRole } from "@/lib/role";
+import { IssueProgress } from "@/components/IssueProgress";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -168,6 +171,7 @@ function combineDetection(local: Detection, ai: Detection): Detection {
 
 function Home() {
   const { user, loading, signOut } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("live");
   const [preview, setPreview] = useState<string | null>(null);
@@ -189,6 +193,11 @@ function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const placeRef = useRef<Place | null>(null);
   placeRef.current = place;
+  const recentReports = useRef<Map<string, number>>(new Map());
+  const autoLock = useRef(false);
+  const fileLiveRef = useRef<(detection: Detection, image: string | null) => Promise<void>>(
+    async () => undefined,
+  );
   const {
     canvasRef,
     sights,
@@ -200,6 +209,7 @@ function Home() {
     queryKey: ["reports"],
     queryFn: () => fetchReports(200),
     enabled: Boolean(user),
+    refetchInterval: 15000,
   });
 
   const stopCamera = useCallback(() => {
@@ -434,6 +444,7 @@ function Home() {
     source: string;
     note: string;
     announce: boolean;
+    resetForm?: boolean;
   }) {
     if (!input.located.lat || !input.located.lng) {
       toast.error("Add a location before submitting.");
@@ -475,6 +486,7 @@ function Home() {
           source: input.source,
           image_path: imagePath,
           reporter_note: input.note || null,
+          status: "reported",
           authority_name: authority.name,
           authority_dept: authority.dept,
           authority_contact: authority.contact,
@@ -503,10 +515,12 @@ function Home() {
         if (input.announce) setAlertInfo({ authority, road: roadName, message });
       }
 
-      toast.success("Report added to the live map.");
-      setDetection(null);
-      setPreview(null);
-      setNote("");
+      toast.success("Reported on the live map.");
+      if (input.resetForm !== false) {
+        setDetection(null);
+        setPreview(null);
+        setNote("");
+      }
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
       return true;
     } catch (err) {
@@ -568,6 +582,68 @@ function Home() {
     });
   }
 
+  async function fileLive(detection: Detection, image: string | null) {
+    if (!shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)) return;
+    if (autoLock.current) return;
+    autoLock.current = true;
+    try {
+      const located =
+        placeRef.current?.lat != null && placeRef.current.lng != null
+          ? placeRef.current
+          : await readCurrentLocation();
+      if (!located?.lat || !located.lng) return;
+      const key = `${detection.primaryType}:${located.lat.toFixed(3)}:${located.lng.toFixed(3)}`;
+      const now = Date.now();
+      if ((recentReports.current.get(key) ?? 0) > now - 90_000) return;
+      recentReports.current.set(key, now);
+      await publishReport({
+        detection,
+        located,
+        image,
+        source: "live",
+        note: "",
+        announce: false,
+        resetForm: false,
+      });
+    } finally {
+      autoLock.current = false;
+    }
+  }
+  fileLiveRef.current = fileLive;
+
+  useEffect(() => {
+    if (!cameraOn || tab !== "live") return;
+    const detection = sightsToDetection(sightsRef.current);
+    if (!shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)) return;
+    const video = videoRef.current;
+    const image =
+      video && video.videoWidth ? drawToDataUrl(video, video.videoWidth, video.videoHeight) : null;
+    void fileLiveRef.current(detection, image);
+  }, [cameraOn, tab, sights, sightsRef]);
+
+  useEffect(() => {
+    if (!cameraOn || tab !== "live") return;
+    const id = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video?.videoWidth || autoLock.current) return;
+      const frame = drawToDataUrl(video, video.videoWidth, video.videoHeight);
+      void analyzeFrame({ data: { image: frame } })
+        .then((detection) => {
+          if (shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)) {
+            void fileLiveRef.current(detection, frame);
+          }
+        })
+        .catch(() => undefined);
+    }, 20000);
+    return () => window.clearInterval(id);
+  }, [cameraOn, tab]);
+
+  useEffect(() => {
+    if (!loading && user && sessionRole() === "authority") {
+      void navigate({ to: "/authority" });
+    }
+  }, [loading, user, navigate]);
+
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
   const totalItems =
     detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
@@ -583,6 +659,14 @@ function Home() {
 
   if (!user) {
     return <AuthCard />;
+  }
+
+  if (sessionRole() === "authority") {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+        Opening dashboard…
+      </div>
+    );
   }
 
   return (
@@ -858,22 +942,19 @@ function Home() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Latest reports</CardTitle>
+              <CardTitle className="text-base">Handling</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {reports.slice(0, 6).map((r) => (
-                <div key={r.id} className="rounded-lg border border-border p-3 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">
-                      {HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}
-                    </span>
-                    <Badge variant="outline" className="capitalize">
-                      {r.severity}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {r.address ?? "Location pending"}
-                  </div>
+                <div key={r.id} className="rounded-lg border border-border p-3">
+                  <IssueProgress
+                    hazardType={r.hazard_type}
+                    status={r.status}
+                    riskScore={r.risk_score}
+                    createdAt={r.created_at}
+                    summary={r.summary}
+                    address={r.address}
+                  />
                 </div>
               ))}
               {reports.length === 0 && (

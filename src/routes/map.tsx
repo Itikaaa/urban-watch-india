@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import MapPanel from "@/components/MapPanel";
 import { fetchAlerts, fetchReports } from "@/lib/reports";
 import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
+import { IssueProgress } from "@/components/IssueProgress";
 import { AuthCard, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/map")({
@@ -42,6 +43,7 @@ function MapPage() {
     queryKey: ["reports"],
     queryFn: () => fetchReports(500),
     enabled: Boolean(user),
+    refetchInterval: 15000,
   });
   const { data: alerts = [] } = useQuery({
     queryKey: ["alerts"],
@@ -155,24 +157,15 @@ function MapPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {filtered.slice(0, 20).map((r) => (
-                <div key={r.id} className="rounded-lg border border-border p-3 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">
-                      {HAZARD_LABELS[r.hazard_type] ?? r.hazard_type}
-                    </span>
-                    <Badge variant="outline" className="capitalize">
-                      {r.severity} · {r.risk_score}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {r.address ?? "Location pending"}
-                  </div>
-                  <p className="mt-1 text-muted-foreground">{r.summary}</p>
-                  {r.authority_name && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Responsible: {r.authority_name}
-                    </div>
-                  )}
+                <div key={r.id} className="rounded-lg border border-border p-3">
+                  <IssueProgress
+                    hazardType={r.hazard_type}
+                    status={r.status}
+                    riskScore={r.risk_score}
+                    createdAt={r.created_at}
+                    summary={r.summary}
+                    address={r.address}
+                  />
                 </div>
               ))}
               {filtered.length === 0 && (
