@@ -172,6 +172,7 @@ function MapPage() {
                     summary={r.summary}
                     address={r.address}
                     verifySummary={r.verify_summary}
+                    items={r.items}
                   />
                 </div>
               ))}

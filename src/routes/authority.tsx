@@ -297,6 +297,7 @@ function AuthorityReportCard({
           summary={report.summary}
           address={report.address}
           verifySummary={report.verify_summary}
+          items={report.items}
         />
         {stage !== "done" && (
           <div className="grid gap-3 sm:grid-cols-2">

@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { composeSummary, parseAnalysis, type HazardSceneAnalysis } from "@/lib/hazard-analysis";
 
 const GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
@@ -20,27 +21,37 @@ export type Detection = {
   summary: string;
   items: DetectedItem[];
   locationGuess: { text: string; confidence: number } | null;
+  analysis: HazardSceneAnalysis | null;
 };
 
-const SYSTEM = `You look at one camera frame and name only what is visible.
+const JSON_SHAPE = `{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|person|phone|other","riskScore":0-100,"confidence":0-1,"summary":"short factual description of every street issue","items":[{"type":"...","label":"...","count":number,"severity":1-5,"confidence":0-1,"note":"size/depth/water details for that object"}],"locationGuess":{"text":"place from signs or landmarks","confidence":0-1},"analysis":{"assessment":"how each issue looks and why it is a risk","depthClass":"none|surface|shallow|moderate|deep|severe","depthCm":number|null,"depthCmMin":number|null,"depthCmMax":number|null,"widthCm":number|null,"lengthCm":number|null,"waterPresent":boolean,"waterDepthCm":number|null,"waterDepthClass":"none|surface|shallow|moderate|deep|severe","waterObscuresBottom":boolean,"cues":"which scale cues you used","caveats":"what is uncertain"}}`;
 
-Label every person as type "person" and label "Person". Label every mobile phone as type "phone" and label "Phone". Label every vehicle by what it is: Car, Bus, Truck, Motorcycle, Bicycle, Train, Boat, or Airplane, with type "vehicle". Label other recognizable objects by their own name (Chair, Dog, Bag, and so on) with type "other". Label only loose clutter — wrappers, bottles, cups, food waste, packets, and discarded rubbish — as type "garbage" and label "Garbage". Never label a person, phone, vehicle, animal, or other recognizable object as garbage.
+const SYSTEM = `You inspect one street photo like a municipal surveyor. Name only what is actually visible. Be precise.
 
-Also list street hazards: potholes, damaged road, waterlogging, stagnant water, debris, open manholes, broken footpaths, broken streetlights, traffic hazards. Use type "streetlight" for a broken streetlight.
+Label every person as type "person" and label "Person". Label every mobile phone as type "phone" and label "Phone". Label every vehicle by what it is: Car, Bus, Truck, Motorcycle, Bicycle, Train, Boat, or Airplane, with type "vehicle". Label other recognizable objects by their own name with type "other". Label only loose clutter — wrappers, bottles, cups, food waste, packets, and discarded rubbish — as type "garbage" and label "Garbage". Never label a person, phone, vehicle, animal, or other recognizable object as garbage.
+
+Also list every street hazard that is visible: potholes, damaged road, waterlogging, stagnant water, debris, open manholes, broken footpaths, broken streetlights, traffic hazards. Use type "streetlight" for a broken streetlight. If a pothole is filled with water, list BOTH pothole and waterlogging (or stagnant_water if it is still/mosquito-prone). Do not hide a cavity just because water covers it.
+
+DEPTH AND SIZE (required whenever a pothole, open manhole, broken pavement, or standing water is visible):
+Estimate centimetres using visible scale. Prefer, in order: manhole cover ~60 cm, brick ~19×9 cm, kerb rise ~10–15 cm, lane marking dash ~150×10 cm in India, car tyre sidewall, motorcycle wheel ~40–50 cm, adult shoe ~25–30 cm, drain grate, paving tile. Convert pixel span of the cavity rim to cm from those references. Infer depth from: rim-to-floor drop, shadow inside the hole, how much of a wheel or kerb is swallowed, broken slab thickness, and perspective foreshortening. Give a best estimate (depthCm) plus a tight range (depthCmMin/Max). Classes: surface <2 cm, shallow 2–5, moderate 5–15, deep 15–30, severe >30.
+
+WATERLOGGED POTHOLES: Treat the water surface as a minimum depth, not the true floor. Measure water depth from the rim using the waterline on kerbs, tyres, debris, or the drop from asphalt edge to the meniscus. If the floor is not visible (turbid, dark, rippled, or no texture on the bottom), set waterObscuresBottom true and set cavity depthCm ABOVE the water depth — typically water depth plus at least 3–10 cm extra unless a clear bottom is seen. Distinguish sheet flooding on a flat road (waterPresent, depthClass none or surface, primaryType waterlogging) from a water-filled crater (primaryType pothole, waterPresent true). Darker, still, debris-trapping pools are usually deeper than bright shallow sheets.
+
+Analyse every issue properly: count, severity, whether it sits in a wheel path, if it can burst a tyre or stall a two-wheeler, garbage volume, open drain risk, broken light at night. Put numbers in analysis and in each item.note.
 
 Return ONLY minified JSON:
-{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|person|phone|other","riskScore":0-100,"confidence":0-1,"summary":"short count of what is visible","items":[{"type":"...","label":"Person|Phone|Garbage or the hazard name","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":{"text":"place from signs or landmarks","confidence":0-1}}
+${JSON_SHAPE}
 
-hazardDetected is true only for a street hazard, including garbage. A person or phone alone is not a hazard: riskScore 0. Open manhole or deep pothole 80+, heavy water 60-85, large garbage 45-70, scattered clutter 15-35. If nothing is visible, hazardDetected false, riskScore 0, items []. If no place is visible, locationGuess null.`;
+hazardDetected is true only for a street hazard, including garbage. A person or phone alone is not a hazard: riskScore 0. Open manhole or severe/deep pothole 80+, water-filled pothole with hidden floor 85+, heavy water 60–85, large garbage 45–70, scattered clutter 15–35. If nothing is visible, hazardDetected false, riskScore 0, items [], analysis null. If no place is visible, locationGuess null. Never invent a depth when no cavity or water is visible — use depthClass "none" and null centimetres.`;
 
 const VERIFY_SYSTEM = `You compare two street photos of the same place: the original hazard report, then a later photo after municipal work.
 
 Score remaining street risk in the RECENT photo only (0-100). Compare it with the original so you can tell if the reported issue improved.
 
-Look for remaining potholes, damaged road, garbage piles, waterlogging, broken streetlights, open manholes, debris, or other street hazards.
+Look for remaining potholes, damaged road, garbage piles, waterlogging, broken streetlights, open manholes, debris, or other street hazards. Re-estimate remaining cavity depth and standing-water depth with the same centimetre method as a survey (scale from kerbs, tyres, bricks, manhole covers). A filled/patched surface should have depthClass none or surface.
 
 Return ONLY minified JSON:
-{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|other","riskScore":0-100,"confidence":0-1,"summary":"short comparison and remaining-risk verdict","items":[{"type":"...","label":"...","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":null}
+${JSON_SHAPE}
 
 riskScore is the remaining risk in the recent photo. Below 40 is low. If the original issue is gone or only a faint trace remains, riskScore below 40, hazardDetected false. If the recent photo still clearly shows the same or a similar street hazard, riskScore 40 or higher and hazardDetected true.`;
 
@@ -55,12 +66,13 @@ function safeJson(text: string): Detection | null {
   if (start === -1 || end === -1) return null;
   try {
     const raw = JSON.parse(cleaned.slice(start, end + 1));
+    const analysis = parseAnalysis(raw.analysis);
     return {
       hazardDetected: Boolean(raw.hazardDetected),
       primaryType: String(raw.primaryType ?? "other"),
       riskScore: Math.max(0, Math.min(100, Number(raw.riskScore ?? 0))),
       confidence: Math.max(0, Math.min(1, Number(raw.confidence ?? 0))),
-      summary: String(raw.summary ?? ""),
+      summary: composeSummary(String(raw.summary ?? ""), analysis),
       items: Array.isArray(raw.items)
         ? raw.items.map((i: Record<string, unknown>) => ({
             type: String(i["type"] ?? "other"),
@@ -78,6 +90,7 @@ function safeJson(text: string): Detection | null {
               confidence: Number(raw.locationGuess.confidence ?? 0.3),
             }
           : null,
+      analysis,
     };
   } catch {
     return null;
@@ -144,8 +157,8 @@ export const analyzeFrame = createServerFn({ method: "POST" })
     return completeVision(
       SYSTEM,
       data.hint
-        ? `Inspect this street image. Context from the reporter: ${data.hint}`
-        : "Inspect this street image and list every hazard, however small.",
+        ? `Inspect this street image. Context from the reporter: ${data.hint} Estimate pothole and water depth in centimetres even if waterlogged.`
+        : "Inspect this street image. List every hazard. Estimate pothole and water depth in centimetres even if the hole is waterlogged. Analyse each issue accurately.",
       [data.image],
     );
   });
@@ -169,8 +182,8 @@ export const verifyRepair = createServerFn({ method: "POST" })
       : "";
     const images = data.originalImage ? [data.originalImage, data.image] : [data.image];
     const prompt = data.originalImage
-      ? `Image 1 is the original report photo. Image 2 is a later photo of the same place after work.${original} Compare them and score remaining risk in image 2.`
-      : `This is a later photo of the reported place after work.${original} Score remaining street risk.`;
+      ? `Image 1 is the original report photo. Image 2 is a later photo of the same place after work.${original} Compare them, re-estimate remaining cavity and water depth in centimetres, and score remaining risk in image 2.`
+      : `This is a later photo of the reported place after work.${original} Score remaining street risk and remaining depth.`;
     return completeVision(VERIFY_SYSTEM, prompt, images);
   });
 

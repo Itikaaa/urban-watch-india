@@ -2,6 +2,7 @@ import { HAZARD_LABELS } from "@/lib/authorities";
 import { assignedTeamFor, handlingStage } from "@/lib/handling";
 import { hazardLabel, teamFocusLabel, teamNameLabel } from "@/lib/i18n";
 import { useT } from "@/lib/i18n-provider";
+import { HazardAnalysisPanel } from "@/components/HazardAnalysisPanel";
 
 export function IssueProgress({
   hazardType,
@@ -13,6 +14,7 @@ export function IssueProgress({
   summary,
   address,
   verifySummary,
+  items,
 }: {
   hazardType: string;
   status: string;
@@ -23,6 +25,7 @@ export function IssueProgress({
   summary?: string | null;
   address?: string | null;
   verifySummary?: string | null;
+  items?: unknown;
 }) {
   const { t, locale } = useT();
   const assigned = assignedTeamFor({
@@ -67,6 +70,7 @@ export function IssueProgress({
         </div>
         {address ? <div className="text-xs text-muted-foreground">{address}</div> : null}
         {summary ? <p className="mt-1 text-sm text-muted-foreground">{summary}</p> : null}
+        <HazardAnalysisPanel items={items} />
       </div>
       <ol className="space-y-2">
         {steps.map((step, index) => (
