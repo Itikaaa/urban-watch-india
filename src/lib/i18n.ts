@@ -169,6 +169,25 @@ export const en = {
   sightPhone: "Phone",
   sightVehicle: "Vehicle",
   sightGarbage: "Garbage",
+  analysisTitle: "Issue analysis",
+  depthEstimate: "Estimated cavity depth",
+  depthAbout: "About {n} cm",
+  depthRange: "Likely {min}–{max} cm",
+  depthClassNone: "No cavity",
+  depthClassSurface: "Surface break",
+  depthClassShallow: "Shallow",
+  depthClassModerate: "Moderate",
+  depthClassDeep: "Deep",
+  depthClassSevere: "Severe",
+  spanEstimate: "Estimated size",
+  spanAbout: "About {w} × {l} cm",
+  widthOnly: "About {w} cm across",
+  standingWater: "Standing water",
+  waterDepthAbout: "About {n} cm of water",
+  waterFloorHidden:
+    "The floor of the hole is hidden. The pothole is likely deeper than the water surface.",
+  analysisCues: "Visual cues",
+  analysisCaveats: "Limits of this estimate",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -343,6 +362,25 @@ export const hi: Record<MessageKey, string> = {
   sightPhone: "फ़ोन",
   sightVehicle: "वाहन",
   sightGarbage: "कचरा",
+  analysisTitle: "समस्या विश्लेषण",
+  depthEstimate: "अनुमानित गड्ढे की गहराई",
+  depthAbout: "लगभग {n} सेमी",
+  depthRange: "संभावित {min}–{max} सेमी",
+  depthClassNone: "कोई गड्ढा नहीं",
+  depthClassSurface: "सतह की दरार",
+  depthClassShallow: "उथला",
+  depthClassModerate: "मध्यम",
+  depthClassDeep: "गहरा",
+  depthClassSevere: "गंभीर",
+  spanEstimate: "अनुमानित आकार",
+  spanAbout: "लगभग {w} × {l} सेमी",
+  widthOnly: "चौड़ाई लगभग {w} सेमी",
+  standingWater: "खड़ा पानी",
+  waterDepthAbout: "लगभग {n} सेमी पानी",
+  waterFloorHidden:
+    "गड्ढे का तल दिखाई नहीं दे रहा। वास्तविक गहराई पानी की सतह से अधिक हो सकती है।",
+  analysisCues: "दृश्य संकेत",
+  analysisCaveats: "इस अनुमान की सीमाएँ",
 };
 
 const HAZARD_KEYS: Record<string, MessageKey> = {

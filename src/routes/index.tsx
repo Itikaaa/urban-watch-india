@@ -35,6 +35,8 @@ import {
   type Detection,
   type DetectedItem,
 } from "@/lib/detect.functions";
+import { HazardAnalysisPanel } from "@/components/HazardAnalysisPanel";
+import { withoutAnalysisItems, withStoredAnalysis } from "@/lib/hazard-analysis";
 import { readExifGps } from "@/lib/exif";
 import {
   HAZARD_LABELS,
@@ -167,6 +169,7 @@ function sightsToDetection(sights: Sight[]): Detection {
     summary: groups.map((group) => `${group.count} ${group.label.toLowerCase()}`).join(", "),
     items,
     locationGuess: null,
+    analysis: null,
   };
 }
 
@@ -182,6 +185,7 @@ function combineDetection(local: Detection, ai: Detection): Detection {
     summary: [local.summary, roadItems.length ? ai.summary : ""].filter(Boolean).join(". "),
     items: items.length ? items : ai.items,
     locationGuess: ai.locationGuess,
+    analysis: ai.analysis,
   };
 }
 
@@ -522,7 +526,7 @@ function Home() {
           risk_score: Math.round(input.detection.riskScore),
           confidence: input.detection.confidence,
           summary: input.detection.summary,
-          items: input.detection.items,
+          items: withStoredAnalysis(input.detection.items, input.detection.analysis),
           lat: input.located.lat,
           lng: input.located.lng,
           address: input.located.address,
@@ -698,8 +702,11 @@ function Home() {
   }, [loading, user, navigate]);
 
   const severity = detection ? severityFromScore(detection.riskScore) : "low";
-  const totalItems =
-    detection?.items.reduce((sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1), 0) ?? 0;
+  const visibleItems = detection ? withoutAnalysisItems(detection.items) : [];
+  const totalItems = visibleItems.reduce(
+    (sum, i) => sum + (Number.isFinite(i.count) ? i.count : 1),
+    0,
+  );
   const liveGroups = groupSights(sights);
 
   if (loading) {
@@ -938,9 +945,9 @@ function Home() {
                   </Badge>
                   {totalItems > 0 && <Badge variant="secondary">{totalItems}</Badge>}
                 </div>
-                {detection.items.length > 0 && (
+                {visibleItems.length > 0 && (
                   <ul className="space-y-1 text-sm">
-                    {detection.items.map((item, i) => (
+                    {visibleItems.map((item, i) => (
                       <li key={i} className="flex gap-2 rounded-md bg-muted/40 px-3 py-2">
                         <span className="font-medium">
                           {item.label}
@@ -953,6 +960,7 @@ function Home() {
                     ))}
                   </ul>
                 )}
+                <HazardAnalysisPanel analysis={detection.analysis} />
                 <Textarea
                   placeholder={t("note")}
                   value={note}
@@ -1021,6 +1029,7 @@ function Home() {
                     summary={r.summary}
                     address={r.address}
                     verifySummary={r.verify_summary}
+                    items={r.items}
                   />
                 </div>
               ))}
