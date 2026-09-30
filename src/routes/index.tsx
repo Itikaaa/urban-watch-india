@@ -71,13 +71,13 @@ import { useT } from "@/lib/i18n-provider";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "SadakSafe — Live Pothole, Garbage & Waterlogging Detection in India" },
+      { title: "DRISHTI — Live Pothole, Garbage & Waterlogging Detection in India" },
       {
         name: "description",
         content:
           "Scan Indian streets with your camera or upload a geotagged photo or video. AI spots potholes, garbage and waterlogging, maps the risk and alerts the responsible civic authority.",
       },
-      { property: "og:title", content: "SadakSafe — Live Urban Risk Detection for India" },
+      { property: "og:title", content: "DRISHTI — Live Urban Risk Detection for India" },
       {
         property: "og:description",
         content:

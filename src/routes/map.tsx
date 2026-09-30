@@ -19,13 +19,13 @@ import { useT } from "@/lib/i18n-provider";
 export const Route = createFileRoute("/map")({
   head: () => ({
     meta: [
-      { title: "Live Urban Risk Map of India — Potholes, Garbage, Waterlogging" },
+      { title: "DRISHTI — Live Urban Risk Map of India" },
       {
         name: "description",
         content:
           "A shared live map of street hazards reported across India, colour-coded by risk, with the log of alerts raised with civic authorities.",
       },
-      { property: "og:title", content: "Live Urban Risk Map of India" },
+      { property: "og:title", content: "DRISHTI — Live Urban Risk Map of India" },
       {
         property: "og:description",
         content:

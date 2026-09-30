@@ -43,7 +43,7 @@ import { useT } from "@/lib/i18n-provider";
 
 export const Route = createFileRoute("/authority")({
   head: () => ({
-    meta: [{ title: "Municipal dashboard — SadakSafe" }],
+    meta: [{ title: "Municipal dashboard — DRISHTI" }],
   }),
   component: AuthorityPage,
 });
