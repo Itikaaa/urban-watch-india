@@ -33,6 +33,15 @@ Return ONLY minified JSON:
 
 hazardDetected is true only for a street hazard, including garbage. A person or phone alone is not a hazard: riskScore 0. Open manhole or deep pothole 80+, heavy water 60-85, large garbage 45-70, scattered clutter 15-35. If nothing is visible, hazardDetected false, riskScore 0, items []. If no place is visible, locationGuess null.`;
 
+const VERIFY_SYSTEM = `You inspect a photo taken after a municipal street repair.
+
+Decide whether any street hazard is still visible. Look for potholes, damaged road, garbage piles, waterlogging, broken streetlights, open manholes, debris, or other street hazards.
+
+Return ONLY minified JSON:
+{"hazardDetected":boolean,"primaryType":"pothole|waterlogging|garbage|debris|open_manhole|broken_footpath|damaged_road|traffic_hazard|stagnant_water|other","riskScore":0-100,"confidence":0-1,"summary":"short verdict","items":[{"type":"...","label":"...","count":number,"severity":1-5,"confidence":0-1,"note":""}],"locationGuess":null}
+
+hazardDetected is true only if a street hazard is still clearly visible. A repaired or clear road, ordinary traffic, wet but drained pavement, or people and vehicles are not hazards: hazardDetected false, riskScore 0, items [].`;
+
 function safeJson(text: string): Detection | null {
   const cleaned = text
     .trim()
@@ -73,6 +82,47 @@ function safeJson(text: string): Detection | null {
   }
 }
 
+async function completeVision(system: string, userText: string, image: string): Promise<Detection> {
+  const key = process.env["LOVABLE_API_KEY"];
+  if (!key) throw new Error("AI is not configured on this project.");
+
+  const res = await fetch(GATEWAY, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3.8-flash",
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userText },
+            { type: "image_url", image_url: { url: image } },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 429)
+      throw new Error("Too many checks at once — wait a few seconds and try again.");
+    if (res.status === 402)
+      throw new Error("AI credits for this project are exhausted. Add credits to continue.");
+    throw new Error(`Analysis failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const text = json.choices?.[0]?.message?.content ?? "";
+  const parsed = safeJson(text);
+  if (!parsed) throw new Error("Could not read the analysis result. Try another frame.");
+  return parsed;
+}
+
 export const analyzeFrame = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) =>
     z
@@ -83,49 +133,31 @@ export const analyzeFrame = createServerFn({ method: "POST" })
       .parse(data),
   )
   .handler(async ({ data }): Promise<Detection> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("AI is not configured on this project.");
+    return completeVision(
+      SYSTEM,
+      data.hint
+        ? `Inspect this street image. Context from the reporter: ${data.hint}`
+        : "Inspect this street image and list every hazard, however small.",
+      data.image,
+    );
+  });
 
-    const res = await fetch(GATEWAY, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3.8-flash",
-        messages: [
-          { role: "system", content: SYSTEM },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: data.hint
-                  ? `Inspect this street image. Context from the reporter: ${data.hint}`
-                  : "Inspect this street image and list every hazard, however small.",
-              },
-              { type: "image_url", image_url: { url: data.image } },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      if (res.status === 429)
-        throw new Error("Too many checks at once — wait a few seconds and try again.");
-      if (res.status === 402)
-        throw new Error("AI credits for this project are exhausted. Add credits to continue.");
-      throw new Error(`Analysis failed (${res.status}): ${body.slice(0, 200)}`);
-    }
-
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const text = json.choices?.[0]?.message?.content ?? "";
-    const parsed = safeJson(text);
-    if (!parsed) throw new Error("Could not read the analysis result. Try another frame.");
-    return parsed;
+export const verifyRepair = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) =>
+    z
+      .object({
+        image: z.string().min(32),
+        originalType: z.string().optional(),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }): Promise<Detection> => {
+    const original = data.originalType ? ` The original report was for ${data.originalType}.` : "";
+    return completeVision(
+      VERIFY_SYSTEM,
+      `This is a completion photo of a repaired street.${original} Say if any street hazard remains.`,
+      data.image,
+    );
   });
 
 export type PlaceInfo = {

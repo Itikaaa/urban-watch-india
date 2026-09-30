@@ -22,6 +22,11 @@ export type ReportRow = {
   authority_name: string | null;
   authority_dept: string | null;
   authority_contact: string | null;
+  assigned_team: string | null;
+  eta_hours: number | null;
+  due_at: string | null;
+  proof_image_path: string | null;
+  verify_summary: string | null;
 };
 
 export type AlertRow = {
