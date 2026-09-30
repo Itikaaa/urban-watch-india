@@ -66,6 +66,66 @@ export function repairIsClear(detection: {
   );
 }
 
+/** Matches `severityFromScore`: below 40 is low risk. */
+export const LOW_RISK_MAX = 39;
+
+export function remainingRiskIsLow(detection: { riskScore: number }) {
+  return detection.riskScore <= LOW_RISK_MAX;
+}
+
+export type PackedHandling = {
+  v: 1;
+  teamId?: string | null;
+  etaHours?: number | null;
+  dueAt?: string | null;
+  proofPath?: string | null;
+  verify?: string | null;
+  afterRisk?: number | null;
+};
+
+const PACK_PREFIX = "SADAKSAFE_HANDLING:";
+
+export function packHandling(meta: PackedHandling) {
+  return `${PACK_PREFIX}${JSON.stringify(meta)}`;
+}
+
+export function unpackHandling(dept: string | null | undefined): PackedHandling | null {
+  if (!dept) return null;
+  const raw = dept.startsWith(PACK_PREFIX) ? dept.slice(PACK_PREFIX.length) : dept;
+  try {
+    const parsed = JSON.parse(raw) as PackedHandling;
+    if (parsed && parsed.v === 1) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function applyPackedHandling<
+  T extends {
+    assigned_team?: string | null;
+    authority_name?: string | null;
+    authority_dept?: string | null;
+    eta_hours?: number | null;
+    due_at?: string | null;
+    proof_image_path?: string | null;
+    verify_summary?: string | null;
+    status: string;
+    hazard_type: string;
+  },
+>(row: T): T {
+  const packed = unpackHandling(row.authority_dept);
+  const team = teamById(row.assigned_team) ?? teamById(packed?.teamId) ?? assignedTeamFor(row);
+  return {
+    ...row,
+    assigned_team: row.assigned_team ?? packed?.teamId ?? team?.id ?? null,
+    eta_hours: row.eta_hours ?? packed?.etaHours ?? null,
+    due_at: row.due_at ?? packed?.dueAt ?? null,
+    proof_image_path: row.proof_image_path ?? packed?.proofPath ?? null,
+    verify_summary: row.verify_summary ?? packed?.verify ?? null,
+  };
+}
+
 export function isReportableHazard(type: string) {
   return REPORTABLE.has(type.toLowerCase());
 }

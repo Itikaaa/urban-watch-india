@@ -1,5 +1,13 @@
 import { supabase } from "@/integrations/supabase/client";
-import { findOpenDuplicate } from "@/lib/handling";
+import {
+  applyPackedHandling,
+  findOpenDuplicate,
+  packHandling,
+  unpackHandling,
+  type PackedHandling,
+  type Team,
+  teamById,
+} from "@/lib/handling";
 
 export type ReportRow = {
   id: string;
@@ -49,7 +57,7 @@ export async function fetchReports(limit = 200): Promise<ReportRow[]> {
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []) as ReportRow[];
+  return ((data ?? []) as ReportRow[]).map((row) => applyPackedHandling(row));
 }
 
 export async function findOpenDuplicateReport(
@@ -62,6 +70,85 @@ export async function findOpenDuplicateReport(
   if (local) return local;
   const open = await fetchReports(400);
   return findOpenDuplicate(open, lat, lng, hazardType);
+}
+
+export async function updateReportHandling(
+  current: ReportRow,
+  patch: {
+    status?: string;
+    team?: Team;
+    etaHours?: number | null;
+    dueAt?: string | null;
+    proofPath?: string | null;
+    verify?: string | null;
+    afterRisk?: number | null;
+  },
+) {
+  const packed: PackedHandling = {
+    v: 1,
+    ...(unpackHandling(current.authority_dept) ?? {
+      teamId: current.assigned_team,
+      etaHours: current.eta_hours,
+      dueAt: current.due_at,
+      proofPath: current.proof_image_path,
+      verify: current.verify_summary,
+    }),
+  };
+  if (patch.team) packed.teamId = patch.team.id;
+  if (patch.etaHours !== undefined) packed.etaHours = patch.etaHours;
+  if (patch.dueAt !== undefined) packed.dueAt = patch.dueAt;
+  if (patch.proofPath !== undefined) packed.proofPath = patch.proofPath;
+  if (patch.verify !== undefined) packed.verify = patch.verify;
+  if (patch.afterRisk !== undefined) packed.afterRisk = patch.afterRisk;
+
+  const team = teamById(packed.teamId);
+  const packedDept = packHandling(packed);
+  const full = {
+    status: patch.status ?? current.status,
+    authority_name: team?.name ?? current.authority_name,
+    authority_dept: packedDept,
+    assigned_team: packed.teamId ?? null,
+    eta_hours: packed.etaHours ?? null,
+    due_at: packed.dueAt ?? null,
+    proof_image_path: packed.proofPath ?? null,
+    verify_summary: packed.verify ?? null,
+  };
+
+  const { data, error } = await supabase
+    .from("reports")
+    .update(full)
+    .eq("id", current.id)
+    .select()
+    .maybeSingle();
+  if (!error && data) return applyPackedHandling(data as ReportRow);
+
+  const missingColumn =
+    !!error &&
+    (/schema cache|could not find the .* column|PGRST204|42703/i.test(error.message) ||
+      error.code === "PGRST204" ||
+      error.code === "42703");
+  if (error && !missingColumn) throw new Error(error.message);
+
+  const { data: fallback, error: fallbackError } = await supabase
+    .from("reports")
+    .update({
+      status: full.status,
+      authority_name: full.authority_name,
+      authority_dept: packedDept,
+    })
+    .eq("id", current.id)
+    .select()
+    .maybeSingle();
+  if (fallbackError) throw new Error(fallbackError.message);
+  if (!fallback) throw new Error("Could not save this update. Try signing in again.");
+  return applyPackedHandling({
+    ...(fallback as ReportRow),
+    assigned_team: packed.teamId ?? null,
+    eta_hours: packed.etaHours ?? null,
+    due_at: packed.dueAt ?? null,
+    proof_image_path: packed.proofPath ?? null,
+    verify_summary: packed.verify ?? null,
+  });
 }
 
 export async function fetchAlerts(limit = 50): Promise<AlertRow[]> {
@@ -91,4 +178,22 @@ export async function uploadHazardImage(dataUrl: string) {
   });
   if (error) throw error;
   return path;
+}
+
+export async function reportImageDataUrl(path: string | null) {
+  const url = await signedImageUrl(path);
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return url;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Could not read the original photo."));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return url;
+  }
 }

@@ -18,15 +18,19 @@ import {
 } from "@/components/ui/select";
 import { IssueProgress } from "@/components/IssueProgress";
 import type { ReportRow } from "@/lib/reports";
-import { signedImageUrl, uploadHazardImage } from "@/lib/reports";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  reportImageDataUrl,
+  signedImageUrl,
+  updateReportHandling,
+  uploadHazardImage,
+} from "@/lib/reports";
 import { AuthCard, useAuth } from "@/lib/auth";
 import {
   assignedTeamFor,
   dueFromEta,
   formatResolution,
   handlingStage,
-  repairIsClear,
+  remainingRiskIsLow,
   resolutionHours,
   TEAMS,
   teamForHazard,
@@ -59,72 +63,84 @@ function AuthorityPage() {
     void queryClient.invalidateQueries({ queryKey: ["reports"] });
   }
 
-  async function assignTeam(id: string, teamId: string) {
-    const team = Object.values(TEAMS).find((item) => item.id === teamId);
-    if (!team) return;
-    setSavingId(id);
-    const { error } = await supabase
-      .from("reports")
-      .update({
-        status: "assigned",
-        assigned_team: team.id,
-      })
-      .eq("id", id);
-    setSavingId(null);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success(`Assigned to ${team.name} — visible on the reporter's progress.`);
-    await refresh();
+  function putReport(updated: ReportRow) {
+    queryClient.setQueriesData({ queryKey: ["reports"] }, (old: ReportRow[] | undefined) =>
+      old?.map((row) => (row.id === updated.id ? updated : row)),
+    );
   }
 
-  async function allocateTime(id: string, hoursRaw: string, createdAt: string) {
+  async function assignTeam(report: ReportRow, teamId: string) {
+    const team = Object.values(TEAMS).find((item) => item.id === teamId);
+    if (!team) return;
+    setSavingId(report.id);
+    try {
+      const updated = await updateReportHandling(report, { status: "assigned", team });
+      putReport(updated);
+      toast.success(`Assigned to ${team.name} — visible on the reporter's progress.`);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not assign this team.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function allocateTime(report: ReportRow, hoursRaw: string) {
     const hours = Number(hoursRaw);
     if (!Number.isFinite(hours) || hours < 1) {
       toast.error("Enter how many hours the team has to finish.");
       return;
     }
-    setSavingId(id);
-    const due = dueFromEta(createdAt, hours).toISOString();
-    const { error } = await supabase
-      .from("reports")
-      .update({
-        eta_hours: Math.round(hours),
-        due_at: due,
-      })
-      .eq("id", id);
-    setSavingId(null);
-    if (error) {
-      toast.error(error.message);
-      return;
+    setSavingId(report.id);
+    try {
+      const due = dueFromEta(report.created_at, hours).toISOString();
+      const updated = await updateReportHandling(report, {
+        etaHours: Math.round(hours),
+        dueAt: due,
+      });
+      putReport(updated);
+      toast.success(
+        `Time set to ${formatResolution(Math.round(hours))} — updated for the reporter.`,
+      );
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the time allocation.");
+    } finally {
+      setSavingId(null);
     }
-    toast.success(`Time set to ${formatResolution(Math.round(hours))} — updated for the reporter.`);
-    await refresh();
   }
 
-  async function closeWithProof(id: string, hazardType: string, dataUrl: string) {
-    setSavingId(id);
+  async function closeWithProof(report: ReportRow, dataUrl: string) {
+    setSavingId(report.id);
     try {
-      const check = await verifyRepair({ data: { image: dataUrl, originalType: hazardType } });
-      if (!repairIsClear(check)) {
+      const originalImage = await reportImageDataUrl(report.image_path);
+      const check = await verifyRepair({
+        data: {
+          image: dataUrl,
+          originalImage: originalImage ?? undefined,
+          originalType: report.hazard_type,
+          originalRisk: report.risk_score,
+        },
+      });
+      if (!remainingRiskIsLow(check)) {
         toast.error(
           check.summary ||
-            "AI still sees an issue in this photo. Upload a clearer picture of the repaired street.",
+            `Remaining risk is ${Math.round(check.riskScore)}/100. Upload a clearer photo of the repaired place — it must score as low risk to close.`,
         );
         return;
       }
       const proofPath = await uploadHazardImage(dataUrl);
-      const { error } = await supabase
-        .from("reports")
-        .update({
-          status: "done",
-          proof_image_path: proofPath,
-          verify_summary: check.summary || "AI found no remaining street hazard.",
-        })
-        .eq("id", id);
-      if (error) throw error;
-      toast.success("AI confirmed a clear street. Marked done for the reporter.");
+      const updated = await updateReportHandling(report, {
+        status: "done",
+        proofPath,
+        verify:
+          check.summary || `AI scored remaining risk ${Math.round(check.riskScore)}/100 (low).`,
+        afterRisk: check.riskScore,
+      });
+      putReport(updated);
+      toast.success(
+        `Remaining risk ${Math.round(check.riskScore)}/100 (low). Closed for the reporter.`,
+      );
       await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not verify the repair photo.");
@@ -167,8 +183,10 @@ function AuthorityPage() {
       </header>
       <main className="mx-auto max-w-6xl space-y-4 px-4 py-8">
         <p className="text-sm text-muted-foreground">
-          Assignment, time, and completion only appear on the reporter's side after you save them
-          here. Closing an issue requires a photo of the fixed street that AI confirms is clear.
+          Assign a team and allocate time here — both save immediately and then appear on the
+          reporter's incident list. To close an assigned issue, upload a new photo of the same
+          place. AI compares it with the original and closes the report only if remaining risk is
+          low.
         </p>
         <div className="grid gap-3 sm:grid-cols-4">
           {(["garbage", "pothole", "streetlight", "water"] as const).map((key) => {
@@ -200,9 +218,9 @@ function AuthorityPage() {
             key={report.id}
             report={report}
             busy={savingId === report.id}
-            onAssign={(teamId) => void assignTeam(report.id, teamId)}
-            onAllocate={(hours) => void allocateTime(report.id, hours, report.created_at)}
-            onClose={(image) => void closeWithProof(report.id, report.hazard_type, image)}
+            onAssign={(teamId) => void assignTeam(report, teamId)}
+            onAllocate={(hours) => void allocateTime(report, hours)}
+            onClose={(image) => void closeWithProof(report, image)}
           />
         ))}
         {reports.length === 0 && <p className="text-sm text-muted-foreground">No reports yet.</p>}
@@ -233,6 +251,14 @@ function AuthorityReportCard({
   );
   const [proof, setProof] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (assigned?.id) setTeamId(assigned.id);
+  }, [assigned?.id]);
+
+  useEffect(() => {
+    if (report.eta_hours != null) setHours(String(report.eta_hours));
+  }, [report.eta_hours]);
 
   useEffect(() => {
     let cancelled = false;
@@ -317,13 +343,36 @@ function AuthorityReportCard({
             </div>
           </div>
         )}
-        {stage === "assigned" && (
+        {(stage === "assigned" || Boolean(assigned)) && stage !== "done" && (
           <div className="space-y-2 rounded-lg border border-border p-3">
-            <Label>Repair proof photo</Label>
+            <Label>Photo of the same place after work</Label>
             <p className="text-xs text-muted-foreground">
-              Upload a picture of the fixed street. AI must detect no remaining issue before this
-              can be marked done.
+              Upload a new picture of the reported location. AI compares it with the original report
+              photo and scores remaining risk. The issue closes only if that score is low (under
+              40/100).
             </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {preview ? (
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Original report</div>
+                  <img
+                    src={preview}
+                    alt=""
+                    className="max-h-40 w-full rounded-lg border object-cover"
+                  />
+                </div>
+              ) : null}
+              {proof ? (
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Recent photo</div>
+                  <img
+                    src={proof}
+                    alt=""
+                    className="max-h-40 w-full rounded-lg border object-cover"
+                  />
+                </div>
+              ) : null}
+            </div>
             <Input
               type="file"
               accept="image/*"
@@ -335,9 +384,6 @@ function AuthorityReportCard({
                 reader.readAsDataURL(file);
               }}
             />
-            {proof ? (
-              <img src={proof} alt="" className="max-h-40 rounded-lg border object-cover" />
-            ) : null}
             <Button
               size="sm"
               disabled={busy || !proof}
@@ -346,7 +392,7 @@ function AuthorityReportCard({
               }}
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
-              Verify with AI and mark done
+              Compare photos and close if low risk
             </Button>
           </div>
         )}
