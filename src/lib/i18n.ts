@@ -1,7 +1,7 @@
 export type Locale = "en" | "hi";
 
 export const en = {
-  brand: "SadakSafe",
+  brand: "DRISHTI",
   india: "India",
   language: "Language",
   english: "English",
@@ -174,7 +174,7 @@ export const en = {
 export type MessageKey = keyof typeof en;
 
 export const hi: Record<MessageKey, string> = {
-  brand: "सड़कसेफ",
+  brand: "DRISHTI",
   india: "भारत",
   language: "भाषा",
   english: "English",

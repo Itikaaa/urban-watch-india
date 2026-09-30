@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getLocale, setActiveLocale, translate, type Locale, type MessageKey } from "@/lib/i18n";
 
-const STORAGE = "sadaksafe-locale";
+const STORAGE = "drishti-locale";
 
 type I18nValue = {
   locale: Locale;

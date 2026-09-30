@@ -77,14 +77,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "SadakSafe — Urban Risk Detection for India" },
+      { title: "DRISHTI — Urban Risk Detection for India" },
       {
         name: "description",
         content:
           "Detect potholes, garbage and waterlogging on Indian streets with live camera or uploads, and map the risk.",
       },
-      { name: "author", content: "SadakSafe" },
-      { property: "og:title", content: "SadakSafe — Urban Risk Detection for India" },
+      { name: "author", content: "DRISHTI" },
+      { property: "og:title", content: "DRISHTI — Urban Risk Detection for India" },
       {
         property: "og:description",
         content: "Live street hazard detection and a shared civic risk map for India.",
