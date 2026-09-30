@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -42,8 +42,9 @@ import {
   severityFromScore,
   type Authority,
 } from "@/lib/authorities";
-import { fetchReports, uploadHazardImage } from "@/lib/reports";
+import { uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveReports } from "@/hooks/use-live-reports";
 import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
 import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
@@ -205,12 +206,7 @@ function Home() {
     status: detectorStatus,
   } = useLiveSights(videoRef, cameraOn && tab === "live");
 
-  const { data: reports = [] } = useQuery({
-    queryKey: ["reports"],
-    queryFn: () => fetchReports(200),
-    enabled: Boolean(user),
-    refetchInterval: 15000,
-  });
+  const { data: reports = [] } = useLiveReports(200, Boolean(user));
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -950,10 +946,13 @@ function Home() {
                   <IssueProgress
                     hazardType={r.hazard_type}
                     status={r.status}
-                    riskScore={r.risk_score}
-                    createdAt={r.created_at}
+                    assignedTeam={r.assigned_team}
+                    authorityName={r.authority_name}
+                    etaHours={r.eta_hours}
+                    dueAt={r.due_at}
                     summary={r.summary}
                     address={r.address}
+                    verifySummary={r.verify_summary}
                   />
                 </div>
               ))}

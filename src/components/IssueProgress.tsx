@@ -1,44 +1,58 @@
 import { HAZARD_LABELS } from "@/lib/authorities";
-import {
-  dueDate,
-  formatResolution,
-  handlingStage,
-  resolutionHours,
-  teamForHazard,
-} from "@/lib/handling";
+import { assignedTeamFor, formatResolution, handlingStage } from "@/lib/handling";
 
 export function IssueProgress({
   hazardType,
   status,
-  riskScore,
-  createdAt,
+  assignedTeam,
+  authorityName,
+  etaHours,
+  dueAt,
   summary,
   address,
+  verifySummary,
 }: {
   hazardType: string;
   status: string;
-  riskScore: number;
-  createdAt: string;
+  assignedTeam?: string | null;
+  authorityName?: string | null;
+  etaHours?: number | null;
+  dueAt?: string | null;
   summary?: string | null;
   address?: string | null;
+  verifySummary?: string | null;
 }) {
-  const team = teamForHazard(hazardType);
+  const assigned = assignedTeamFor({
+    assigned_team: assignedTeam,
+    authority_name: authorityName,
+    status,
+    hazard_type: hazardType,
+  });
   const stage = handlingStage(status);
-  const hours = resolutionHours(riskScore);
-  const due = dueDate(createdAt, riskScore);
+  const hasTime = etaHours != null || Boolean(dueAt);
+  const dueLabel = dueAt ? new Date(dueAt).toLocaleString() : null;
   const steps = [
     { title: "Reported successfully", done: true },
     {
-      title: stage === "reported" ? "Assigned" : `Assigned to ${team.name}`,
-      detail: team.focus,
-      done: stage !== "reported",
+      title: assigned ? `Assigned to ${assigned.name}` : "Waiting for municipal assignment",
+      detail: assigned ? assigned.focus : "The authority dashboard assigns a field team.",
+      done: Boolean(assigned),
     },
     {
-      title: `Completes in ${formatResolution(hours)}`,
-      detail: due.toLocaleString(),
+      title: hasTime
+        ? `Completes in ${formatResolution(etaHours ?? 0)}`
+        : "Waiting for time allocation",
+      detail: hasTime ? dueLabel : "The authority sets how long the repair should take.",
+      done: hasTime || stage === "done",
+    },
+    {
+      title: stage === "done" ? "Done and closed" : "Waiting for verified repair photo",
+      detail:
+        stage === "done"
+          ? (verifySummary ?? "AI confirmed the street no longer shows the reported issue.")
+          : "The authority uploads a photo of the fixed street. AI must find no remaining issue.",
       done: stage === "done",
     },
-    { title: "Done and closed", done: stage === "done" },
   ];
 
   return (
@@ -62,7 +76,7 @@ export function IssueProgress({
               <span className={step.done ? "font-medium" : "text-muted-foreground"}>
                 {step.title}
               </span>
-              {"detail" in step && step.detail ? (
+              {step.detail ? (
                 <span className="mt-0.5 block text-xs text-muted-foreground">{step.detail}</span>
               ) : null}
             </span>

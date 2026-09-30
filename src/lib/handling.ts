@@ -36,6 +36,36 @@ export function teamForHazard(type: string): Team {
   return TEAMS.pothole;
 }
 
+export function teamById(id: string | null | undefined): Team | null {
+  if (!id) return null;
+  const match = Object.values(TEAMS).find((team) => team.id === id || team.name === id);
+  return match ?? null;
+}
+
+export function assignedTeamFor(report: {
+  assigned_team?: string | null;
+  authority_name?: string | null;
+  status: string;
+  hazard_type: string;
+}): Team | null {
+  const stored = teamById(report.assigned_team);
+  if (stored) return stored;
+  const legacy = teamById(report.authority_name);
+  if (legacy && handlingStage(report.status) !== "reported") return legacy;
+  return null;
+}
+
+export function repairIsClear(detection: {
+  hazardDetected: boolean;
+  primaryType: string;
+  items: { type: string; count: number }[];
+}) {
+  return (
+    !detection.hazardDetected &&
+    !shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)
+  );
+}
+
 export function isReportableHazard(type: string) {
   return REPORTABLE.has(type.toLowerCase());
 }
@@ -63,6 +93,10 @@ export function formatResolution(hours: number) {
 
 export function dueDate(createdAt: string, riskScore: number) {
   return new Date(new Date(createdAt).getTime() + resolutionHours(riskScore) * 60 * 60 * 1000);
+}
+
+export function dueFromEta(from: string, hours: number) {
+  return new Date(new Date(from).getTime() + hours * 60 * 60 * 1000);
 }
 
 export function handlingStage(status: string) {

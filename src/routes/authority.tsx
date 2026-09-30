@@ -1,18 +1,39 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Radar } from "lucide-react";
+import { Camera, Loader2, Radar } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { IssueProgress } from "@/components/IssueProgress";
-import { fetchReports } from "@/lib/reports";
+import type { ReportRow } from "@/lib/reports";
+import { signedImageUrl, uploadHazardImage } from "@/lib/reports";
 import { supabase } from "@/integrations/supabase/client";
 import { AuthCard, useAuth } from "@/lib/auth";
-import { handlingStage, teamForHazard } from "@/lib/handling";
+import {
+  assignedTeamFor,
+  dueFromEta,
+  formatResolution,
+  handlingStage,
+  repairIsClear,
+  resolutionHours,
+  TEAMS,
+  teamForHazard,
+} from "@/lib/handling";
 import { sessionRole } from "@/lib/role";
+import { verifyRepair } from "@/lib/detect.functions";
+import { useLiveReports } from "@/hooks/use-live-reports";
 
 export const Route = createFileRoute("/authority")({
   head: () => ({
@@ -26,12 +47,7 @@ function AuthorityPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [savingId, setSavingId] = useState<string | null>(null);
-  const { data: reports = [] } = useQuery({
-    queryKey: ["reports"],
-    queryFn: () => fetchReports(200),
-    enabled: Boolean(user),
-    refetchInterval: 15000,
-  });
+  const { data: reports = [] } = useLiveReports(200, Boolean(user));
 
   useEffect(() => {
     if (!loading && user && sessionRole() !== "authority") {
@@ -39,15 +55,19 @@ function AuthorityPage() {
     }
   }, [loading, user, navigate]);
 
-  async function assign(id: string, hazardType: string) {
-    const team = teamForHazard(hazardType);
+  async function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["reports"] });
+  }
+
+  async function assignTeam(id: string, teamId: string) {
+    const team = Object.values(TEAMS).find((item) => item.id === teamId);
+    if (!team) return;
     setSavingId(id);
     const { error } = await supabase
       .from("reports")
       .update({
         status: "assigned",
-        authority_name: team.name,
-        authority_dept: `${team.name} — ${team.focus}`,
+        assigned_team: team.id,
       })
       .eq("id", id);
     setSavingId(null);
@@ -55,20 +75,62 @@ function AuthorityPage() {
       toast.error(error.message);
       return;
     }
-    toast.success(`Assigned to ${team.name}`);
-    void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    toast.success(`Assigned to ${team.name} — visible on the reporter's progress.`);
+    await refresh();
   }
 
-  async function closeIssue(id: string) {
+  async function allocateTime(id: string, hoursRaw: string, createdAt: string) {
+    const hours = Number(hoursRaw);
+    if (!Number.isFinite(hours) || hours < 1) {
+      toast.error("Enter how many hours the team has to finish.");
+      return;
+    }
     setSavingId(id);
-    const { error } = await supabase.from("reports").update({ status: "done" }).eq("id", id);
+    const due = dueFromEta(createdAt, hours).toISOString();
+    const { error } = await supabase
+      .from("reports")
+      .update({
+        eta_hours: Math.round(hours),
+        due_at: due,
+      })
+      .eq("id", id);
     setSavingId(null);
     if (error) {
       toast.error(error.message);
       return;
     }
-    toast.success("Marked done and closed");
-    void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    toast.success(`Time set to ${formatResolution(Math.round(hours))} — updated for the reporter.`);
+    await refresh();
+  }
+
+  async function closeWithProof(id: string, hazardType: string, dataUrl: string) {
+    setSavingId(id);
+    try {
+      const check = await verifyRepair({ data: { image: dataUrl, originalType: hazardType } });
+      if (!repairIsClear(check)) {
+        toast.error(
+          check.summary ||
+            "AI still sees an issue in this photo. Upload a clearer picture of the repaired street.",
+        );
+        return;
+      }
+      const proofPath = await uploadHazardImage(dataUrl);
+      const { error } = await supabase
+        .from("reports")
+        .update({
+          status: "done",
+          proof_image_path: proofPath,
+          verify_summary: check.summary || "AI found no remaining street hazard.",
+        })
+        .eq("id", id);
+      if (error) throw error;
+      toast.success("AI confirmed a clear street. Marked done for the reporter.");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not verify the repair photo.");
+    } finally {
+      setSavingId(null);
+    }
   }
 
   if (loading) {
@@ -104,6 +166,10 @@ function AuthorityPage() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl space-y-4 px-4 py-8">
+        <p className="text-sm text-muted-foreground">
+          Assignment, time, and completion only appear on the reporter's side after you save them
+          here. Closing an issue requires a photo of the fixed street that AI confirms is clear.
+        </p>
         <div className="grid gap-3 sm:grid-cols-4">
           {(["garbage", "pothole", "streetlight", "water"] as const).map((key) => {
             const team = teamForHazard(
@@ -129,52 +195,162 @@ function AuthorityPage() {
             );
           })}
         </div>
-        {reports.map((report) => {
-          const stage = handlingStage(report.status);
-          const team = teamForHazard(report.hazard_type);
-          return (
-            <Card key={report.id}>
-              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-                <CardTitle className="text-base">{team.name}</CardTitle>
-                <Badge variant="outline" className="capitalize">
-                  {stage}
-                </Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <IssueProgress
-                  hazardType={report.hazard_type}
-                  status={report.status}
-                  riskScore={report.risk_score}
-                  createdAt={report.created_at}
-                  summary={report.summary}
-                  address={report.address}
-                />
-                <div className="flex flex-wrap gap-2">
-                  {stage === "reported" && (
-                    <Button
-                      size="sm"
-                      disabled={savingId === report.id}
-                      onClick={() => void assign(report.id, report.hazard_type)}
-                    >
-                      Assign to {team.name}
-                    </Button>
-                  )}
-                  {stage === "assigned" && (
-                    <Button
-                      size="sm"
-                      disabled={savingId === report.id}
-                      onClick={() => void closeIssue(report.id)}
-                    >
-                      Mark done
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+        {reports.map((report) => (
+          <AuthorityReportCard
+            key={report.id}
+            report={report}
+            busy={savingId === report.id}
+            onAssign={(teamId) => void assignTeam(report.id, teamId)}
+            onAllocate={(hours) => void allocateTime(report.id, hours, report.created_at)}
+            onClose={(image) => void closeWithProof(report.id, report.hazard_type, image)}
+          />
+        ))}
         {reports.length === 0 && <p className="text-sm text-muted-foreground">No reports yet.</p>}
       </main>
     </div>
+  );
+}
+
+function AuthorityReportCard({
+  report,
+  busy,
+  onAssign,
+  onAllocate,
+  onClose,
+}: {
+  report: ReportRow;
+  busy: boolean;
+  onAssign: (teamId: string) => void;
+  onAllocate: (hours: string) => void;
+  onClose: (image: string) => void;
+}) {
+  const suggested = teamForHazard(report.hazard_type);
+  const assigned = assignedTeamFor(report);
+  const stage = handlingStage(report.status);
+  const [teamId, setTeamId] = useState(assigned?.id ?? suggested.id);
+  const [hours, setHours] = useState(
+    String(report.eta_hours ?? resolutionHours(report.risk_score)),
+  );
+  const [proof, setProof] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void signedImageUrl(report.image_path).then((url) => {
+      if (!cancelled) setPreview(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [report.image_path]);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-base">{assigned?.name ?? "Unassigned"}</CardTitle>
+        <Badge variant="outline" className="capitalize">
+          {stage}
+        </Badge>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {preview ? (
+          <img src={preview} alt="" className="max-h-48 w-full rounded-lg border object-cover" />
+        ) : null}
+        <IssueProgress
+          hazardType={report.hazard_type}
+          status={report.status}
+          assignedTeam={report.assigned_team}
+          authorityName={report.authority_name}
+          etaHours={report.eta_hours}
+          dueAt={report.due_at}
+          summary={report.summary}
+          address={report.address}
+          verifySummary={report.verify_summary}
+        />
+        {stage !== "done" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <Label>Assign field team</Label>
+              <Select value={teamId} onValueChange={setTeamId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a team" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.values(TEAMS).map((team) => (
+                    <SelectItem key={team.id} value={team.id}>
+                      {team.name} — {team.focus}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Suggested from the report: {suggested.name}. The reporter sees this only after you
+                assign.
+              </p>
+              <Button size="sm" disabled={busy} onClick={() => onAssign(teamId)}>
+                {assigned
+                  ? "Update assignment"
+                  : `Assign ${Object.values(TEAMS).find((t) => t.id === teamId)?.name ?? "team"}`}
+              </Button>
+            </div>
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <Label htmlFor={`eta-${report.id}`}>Allocate time (hours)</Label>
+              <Input
+                id={`eta-${report.id}`}
+                type="number"
+                min={1}
+                value={hours}
+                onChange={(event) => setHours(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Suggested {formatResolution(resolutionHours(report.risk_score))} from risk. Saved
+                time is what the reporter sees.
+              </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => onAllocate(hours)}
+              >
+                Save time allocation
+              </Button>
+            </div>
+          </div>
+        )}
+        {stage === "assigned" && (
+          <div className="space-y-2 rounded-lg border border-border p-3">
+            <Label>Repair proof photo</Label>
+            <p className="text-xs text-muted-foreground">
+              Upload a picture of the fixed street. AI must detect no remaining issue before this
+              can be marked done.
+            </p>
+            <Input
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => setProof(String(reader.result));
+                reader.readAsDataURL(file);
+              }}
+            />
+            {proof ? (
+              <img src={proof} alt="" className="max-h-40 rounded-lg border object-cover" />
+            ) : null}
+            <Button
+              size="sm"
+              disabled={busy || !proof}
+              onClick={() => {
+                if (proof) onClose(proof);
+              }}
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
+              Verify with AI and mark done
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

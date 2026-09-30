@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import MapPanel from "@/components/MapPanel";
-import { fetchAlerts, fetchReports } from "@/lib/reports";
+import { fetchAlerts } from "@/lib/reports";
+import { useLiveReports } from "@/hooks/use-live-reports";
 import { HAZARD_LABELS, riskColor } from "@/lib/authorities";
 import { IssueProgress } from "@/components/IssueProgress";
 import { AuthCard, useAuth } from "@/lib/auth";
@@ -39,12 +40,7 @@ const FILTERS = ["all", "pothole", "garbage", "waterlogging", "other"] as const;
 function MapPage() {
   const { user, loading, signOut } = useAuth();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
-  const { data: reports = [] } = useQuery({
-    queryKey: ["reports"],
-    queryFn: () => fetchReports(500),
-    enabled: Boolean(user),
-    refetchInterval: 15000,
-  });
+  const { data: reports = [] } = useLiveReports(500, Boolean(user));
   const { data: alerts = [] } = useQuery({
     queryKey: ["alerts"],
     queryFn: () => fetchAlerts(50),
@@ -161,10 +157,13 @@ function MapPage() {
                   <IssueProgress
                     hazardType={r.hazard_type}
                     status={r.status}
-                    riskScore={r.risk_score}
-                    createdAt={r.created_at}
+                    assignedTeam={r.assigned_team}
+                    authorityName={r.authority_name}
+                    etaHours={r.eta_hours}
+                    dueAt={r.due_at}
                     summary={r.summary}
                     address={r.address}
+                    verifySummary={r.verify_summary}
                   />
                 </div>
               ))}
