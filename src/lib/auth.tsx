@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Radar } from "lucide-react";
 import { toast } from "sonner";
+import { clearSessionRole, setSessionRole, type AppRole } from "@/lib/role";
 
 type AuthContextValue = {
   user: User | null;
@@ -52,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient, router]);
 
   async function signOut() {
+    clearSessionRole();
     await queryClient.cancelQueries();
     queryClient.clear();
     await supabase.auth.signOut();
@@ -66,8 +68,14 @@ export function useAuth() {
   return value;
 }
 
-export function AuthCard({ message = "Sign in to scan streets and share reports on the live map." }: { message?: string }) {
+export function AuthCard({
+  message = "Sign in to scan streets and share reports on the live map.",
+}: {
+  message?: string;
+}) {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [role, setRole] = useState<AppRole>("user");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -82,18 +90,28 @@ export function AuthCard({ message = "Sign in to scan streets and share reports 
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
-        toast.success("Signed in. You can now submit a report.");
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: { emailRedirectTo: window.location.origin, data: { role } },
         });
         if (error) throw error;
-        if (!data.session) toast.success("Check your email to confirm your account, then sign in.");
+        if (!data.session) {
+          toast.success("Check your email to confirm your account, then sign in.");
+          return;
+        }
       }
+      setSessionRole(role);
+      void supabase.auth.updateUser({ data: { role } });
+      toast.success(role === "authority" ? "Signed in as municipal authority." : "Signed in.");
+      if (role === "authority") void navigate({ to: "/authority" });
     } catch {
-      toast.error(mode === "signin" ? "Sign-in failed. Check your email and password." : "Could not create the account.");
+      toast.error(
+        mode === "signin"
+          ? "Sign-in failed. Check your email and password."
+          : "Could not create the account.",
+      );
     } finally {
       setBusy(false);
     }
@@ -111,7 +129,28 @@ export function AuthCard({ message = "Sign in to scan streets and share reports 
           <CardDescription>{message}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Input type="email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={role === "user" ? "default" : "secondary"}
+              onClick={() => setRole("user")}
+            >
+              User
+            </Button>
+            <Button
+              type="button"
+              variant={role === "authority" ? "default" : "secondary"}
+              onClick={() => setRole("authority")}
+            >
+              Municipal authority
+            </Button>
+          </div>
+          <Input
+            type="email"
+            placeholder="Email address"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
           <Input
             type="password"
             placeholder="Password"
