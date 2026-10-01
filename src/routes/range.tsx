@@ -60,6 +60,11 @@ function RangePage() {
           </div>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
+            <Link to="/directions">
+              <Button variant="secondary" size="sm">
+                {t("safeRoute")}
+              </Button>
+            </Link>
             <Link to="/map">
               <Button variant="secondary" size="sm">
                 {t("liveRiskMap")}

@@ -847,6 +847,11 @@ function Home() {
           </div>
           <nav className="flex items-center gap-2">
             <LanguageSwitcher />
+            <Link to="/directions">
+              <Button variant="secondary" size="sm">
+                {t("safeRoute")}
+              </Button>
+            </Link>
             <Link to="/range">
               <Button variant="secondary" size="sm">
                 <Radar className="size-4" /> {t("rangeRiskScan")}
