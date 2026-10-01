@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthorityRouteImport } from './routes/authority'
+import { Route as DirectionsRouteImport } from './routes/directions'
 import { Route as MapRouteImport } from './routes/map'
+import { Route as RangeRouteImport } from './routes/range'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,40 +25,58 @@ const AuthorityRoute = AuthorityRouteImport.update({
   path: '/authority',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DirectionsRoute = DirectionsRouteImport.update({
+  id: '/directions',
+  path: '/directions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MapRoute = MapRouteImport.update({
   id: '/map',
   path: '/map',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RangeRoute = RangeRouteImport.update({
+  id: '/range',
+  path: '/range',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/authority': typeof AuthorityRoute
+  '/directions': typeof DirectionsRoute
   '/map': typeof MapRoute
+  '/range': typeof RangeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/authority': typeof AuthorityRoute
+  '/directions': typeof DirectionsRoute
   '/map': typeof MapRoute
+  '/range': typeof RangeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/authority': typeof AuthorityRoute
+  '/directions': typeof DirectionsRoute
   '/map': typeof MapRoute
+  '/range': typeof RangeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/authority' | '/map'
+  fullPaths: '/' | '/authority' | '/directions' | '/map' | '/range'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/authority' | '/map'
-  id: '__root__' | '/' | '/authority' | '/map'
+  to: '/' | '/authority' | '/directions' | '/map' | '/range'
+  id: '__root__' | '/' | '/authority' | '/directions' | '/map' | '/range'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthorityRoute: typeof AuthorityRoute
+  DirectionsRoute: typeof DirectionsRoute
   MapRoute: typeof MapRoute
+  RangeRoute: typeof RangeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -75,11 +95,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthorityRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/directions': {
+      id: '/directions'
+      path: '/directions'
+      fullPath: '/directions'
+      preLoaderRoute: typeof DirectionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/map': {
       id: '/map'
       path: '/map'
       fullPath: '/map'
       preLoaderRoute: typeof MapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/range': {
+      id: '/range'
+      path: '/range'
+      fullPath: '/range'
+      preLoaderRoute: typeof RangeRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -88,7 +122,9 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthorityRoute: AuthorityRoute,
+  DirectionsRoute: DirectionsRoute,
   MapRoute: MapRoute,
+  RangeRoute: RangeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

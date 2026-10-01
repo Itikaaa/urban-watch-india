@@ -89,6 +89,16 @@ function MapPage() {
           </div>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
+            <Link to="/directions">
+              <Button variant="secondary" size="sm">
+                {t("safeRoute")}
+              </Button>
+            </Link>
+            <Link to="/range">
+              <Button variant="secondary" size="sm">
+                {t("rangeRiskScan")}
+              </Button>
+            </Link>
             <Link to="/">
               <Button variant="secondary" size="sm">
                 <ArrowLeft className="size-4" /> {t("scanStreet")}

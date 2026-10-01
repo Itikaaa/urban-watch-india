@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import type { MapReport } from "./HazardMap";
+import type { MapReport, MapRouteLine } from "./HazardMap";
 
 const HazardMap = lazy(() => import("./HazardMap"));
 
@@ -7,6 +7,9 @@ export default function MapPanel(props: {
   reports: MapReport[];
   height?: number;
   focus?: { lat: number; lng: number } | null;
+  origin?: { lat: number; lng: number } | null;
+  rangeMeters?: number;
+  routes?: MapRouteLine[];
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);

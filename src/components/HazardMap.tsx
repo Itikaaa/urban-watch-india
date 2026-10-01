@@ -16,14 +16,27 @@ export type MapReport = {
   created_at: string;
 };
 
+export type MapRouteLine = {
+  path: { lat: number; lng: number }[];
+  color: string;
+  weight?: number;
+  dashed?: boolean;
+};
+
 export default function HazardMap({
   reports,
   height = 420,
   focus,
+  origin,
+  rangeMeters,
+  routes,
 }: {
   reports: MapReport[];
   height?: number;
   focus?: { lat: number; lng: number } | null;
+  origin?: { lat: number; lng: number } | null;
+  rangeMeters?: number;
+  routes?: MapRouteLine[];
 }) {
   const { locale, t } = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -76,14 +89,51 @@ export default function HazardMap({
         .addTo(layer);
     }
 
-    if (focus) {
+    for (const line of routes ?? []) {
+      if (line.path.length < 2) continue;
+      const latlngs = line.path.map((point) => [point.lat, point.lng] as [number, number]);
+      L.polyline(latlngs, {
+        color: line.color,
+        weight: line.weight ?? 5,
+        opacity: 0.9,
+        dashArray: line.dashed ? "8 8" : undefined,
+      }).addTo(layer);
+      for (const point of latlngs) points.push(point);
+    }
+
+    let rangeCircle: L.Circle | null = null;
+    if (origin && rangeMeters) {
+      rangeCircle = L.circle([origin.lat, origin.lng], {
+        radius: rangeMeters,
+        color: "#38bdf8",
+        weight: 2,
+        fillColor: "#38bdf8",
+        fillOpacity: 0.08,
+      }).addTo(layer);
+    }
+    if (origin) {
+      L.circleMarker([origin.lat, origin.lng], {
+        radius: 8,
+        color: "#0ea5e9",
+        weight: 2,
+        fillColor: "#38bdf8",
+        fillOpacity: 1,
+      })
+        .bindPopup(`<strong>${t("youAreHere")}</strong>`)
+        .addTo(layer);
+      points.push([origin.lat, origin.lng]);
+    }
+
+    if (rangeCircle) {
+      map.fitBounds(rangeCircle.getBounds().pad(0.08));
+    } else if (focus) {
       map.setView([focus.lat, focus.lng], 16);
     } else if (points.length === 1) {
       map.setView(points[0]!, 15);
     } else if (points.length > 1) {
       map.fitBounds(L.latLngBounds(points).pad(0.25));
     }
-  }, [reports, focus, locale, t]);
+  }, [reports, focus, origin, rangeMeters, routes, locale, t]);
 
   return (
     <div ref={containerRef} style={{ height }} className="w-full rounded-xl border border-border" />
