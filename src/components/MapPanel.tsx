@@ -7,6 +7,8 @@ export default function MapPanel(props: {
   reports: MapReport[];
   height?: number;
   focus?: { lat: number; lng: number } | null;
+  origin?: { lat: number; lng: number } | null;
+  rangeMeters?: number;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);

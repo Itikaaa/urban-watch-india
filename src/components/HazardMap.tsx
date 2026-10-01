@@ -20,10 +20,14 @@ export default function HazardMap({
   reports,
   height = 420,
   focus,
+  origin,
+  rangeMeters,
 }: {
   reports: MapReport[];
   height?: number;
   focus?: { lat: number; lng: number } | null;
+  origin?: { lat: number; lng: number } | null;
+  rangeMeters?: number;
 }) {
   const { locale, t } = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -76,14 +80,36 @@ export default function HazardMap({
         .addTo(layer);
     }
 
-    if (focus) {
+    let rangeCircle: L.Circle | null = null;
+    if (origin && rangeMeters) {
+      rangeCircle = L.circle([origin.lat, origin.lng], {
+        radius: rangeMeters,
+        color: "#38bdf8",
+        weight: 2,
+        fillColor: "#38bdf8",
+        fillOpacity: 0.08,
+      }).addTo(layer);
+      L.circleMarker([origin.lat, origin.lng], {
+        radius: 8,
+        color: "#0ea5e9",
+        weight: 2,
+        fillColor: "#38bdf8",
+        fillOpacity: 1,
+      })
+        .bindPopup(`<strong>${t("youAreHere")}</strong>`)
+        .addTo(layer);
+    }
+
+    if (rangeCircle) {
+      map.fitBounds(rangeCircle.getBounds().pad(0.08));
+    } else if (focus) {
       map.setView([focus.lat, focus.lng], 16);
     } else if (points.length === 1) {
       map.setView(points[0]!, 15);
     } else if (points.length > 1) {
       map.fitBounds(L.latLngBounds(points).pad(0.25));
     }
-  }, [reports, focus, locale, t]);
+  }, [reports, focus, origin, rangeMeters, locale, t]);
 
   return (
     <div ref={containerRef} style={{ height }} className="w-full rounded-xl border border-border" />

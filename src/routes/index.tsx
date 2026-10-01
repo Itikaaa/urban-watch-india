@@ -51,6 +51,7 @@ import { AuthCard, useAuth } from "@/lib/auth";
 import { annotateSource, runStillDetections } from "@/lib/object-detector";
 import { clutterRisk, groupSights, type Sight } from "@/lib/sights";
 import { useLiveSights } from "@/hooks/use-live-sights";
+import { useRangeRiskScan } from "@/hooks/use-range-risk-scan";
 import {
   findOpenDuplicate,
   findRecentPin,
@@ -233,6 +234,18 @@ function Home() {
   const { data: reports = [] } = useLiveReports(200, Boolean(user));
   const reportsRef = useRef(reports);
   reportsRef.current = reports;
+  const [rangeWatch, setRangeWatch] = useState(false);
+  useEffect(() => {
+    if (!user || sessionRole() === "authority") return;
+    if (!navigator.permissions?.query) return;
+    void navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        if (status.state === "granted") setRangeWatch(true);
+      })
+      .catch(() => undefined);
+  }, [user]);
+  useRangeRiskScan({ enabled: rangeWatch, autoLocate: rangeWatch });
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -834,6 +847,11 @@ function Home() {
           </div>
           <nav className="flex items-center gap-2">
             <LanguageSwitcher />
+            <Link to="/range">
+              <Button variant="secondary" size="sm">
+                <Radar className="size-4" /> {t("rangeRiskScan")}
+              </Button>
+            </Link>
             <Link to="/map">
               <Button variant="secondary" size="sm">
                 <MapPin className="size-4" /> {t("liveRiskMap")}

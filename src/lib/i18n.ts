@@ -189,6 +189,24 @@ export const en = {
     "The floor of the hole is hidden. The pothole is likely deeper than the water surface.",
   analysisCues: "Visual cues",
   analysisCaveats: "Limits of this estimate",
+  rangeRiskScan: "Range risk scan",
+  rangeRiskScanHelp:
+    "This map draws a 1 km circle around you. Open high or critical hazards inside that range trigger an automatic alert on this device.",
+  rangeRadius: "1 km",
+  startRangeScan: "Scan my 1 km range",
+  locatingYou: "Finding your location…",
+  youAreHere: "You are here",
+  nearbyHazards: "Hazards in range",
+  noNearbyHazards: "No open hazards in this 1 km range.",
+  noSevereNearby: "No high or critical risks in your 1 km range right now.",
+  severeNearbyTitle: "Severe risk nearby",
+  severeNearbyBody: "{n} high or critical hazard(s) within 1 km. Stay alert on this stretch.",
+  severeAlert: "{hazard} about {n} m away at {place}",
+  metersAway: "{n} m away",
+  withinRange: "Range around you",
+  locationNeededRange: "Allow location so the 1 km range scan can watch for severe risks near you.",
+  rangeClear: "Range is clear",
+  authRangeMessage: "Sign in to scan the 1 km range around you and receive nearby risk alerts.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -383,6 +401,25 @@ export const hi: Record<MessageKey, string> = {
     "गड्ढे का तल दिखाई नहीं दे रहा। वास्तविक गहराई पानी की सतह से अधिक हो सकती है।",
   analysisCues: "दृश्य संकेत",
   analysisCaveats: "इस अनुमान की सीमाएँ",
+  rangeRiskScan: "रेंज जोखिम स्कैन",
+  rangeRiskScanHelp:
+    "यह मानचित्र आपके चारों ओर 1 किमी का घेरा दिखाता है। उस घेरे में खुले उच्च या गंभीर खतरे पर इस डिवाइस पर स्वतः अलर्ट आता है।",
+  rangeRadius: "1 किमी",
+  startRangeScan: "मेरी 1 किमी रेंज स्कैन करें",
+  locatingYou: "आपकी लोकेशन खोज रहे हैं…",
+  youAreHere: "आप यहाँ हैं",
+  nearbyHazards: "रेंज में खतरे",
+  noNearbyHazards: "इस 1 किमी रेंज में कोई खुला खतरा नहीं है।",
+  noSevereNearby: "आपकी 1 किमी रेंज में अभी कोई उच्च या गंभीर जोखिम नहीं है।",
+  severeNearbyTitle: "पास में गंभीर जोखिम",
+  severeNearbyBody: "1 किमी के भीतर {n} उच्च या गंभीर खतरा। इस रास्ते पर सतर्क रहें।",
+  severeAlert: "{hazard} लगभग {n} मी दूर, {place}",
+  metersAway: "{n} मी दूर",
+  withinRange: "आपके चारों ओर रेंज",
+  locationNeededRange:
+    "1 किमी रेंज स्कैन के लिए लोकेशन अनुमति दें, ताकि पास के गंभीर जोखिम पर अलर्ट मिल सके।",
+  rangeClear: "रेंज सुरक्षित है",
+  authRangeMessage: "अपनी 1 किमी रेंज स्कैन करने और पास के जोखिम अलर्ट पाने के लिए साइन इन करें।",
 };
 
 const HAZARD_KEYS: Record<string, MessageKey> = {
