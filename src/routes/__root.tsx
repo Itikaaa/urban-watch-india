@@ -12,9 +12,9 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { Toaster } from "../components/ui/sonner";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { AuthProvider } from "../lib/auth";
-import { LanguageProvider } from "../lib/i18n-provider";
-import { tKey } from "../lib/i18n";
+import { AuthProvider } from "@/lib/auth";
+import { LanguageProvider } from "@/lib/i18n-provider";
+import { tKey } from "@/lib/i18n";
 
 function NotFoundComponent() {
   return (
