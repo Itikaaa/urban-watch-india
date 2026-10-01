@@ -111,11 +111,6 @@ export async function updateReportHandling(
     status: patch.status ?? current.status,
     authority_name: team?.name ?? current.authority_name,
     authority_dept: packedDept,
-    assigned_team: packed.teamId ?? null,
-    eta_hours: packed.etaHours ?? null,
-    due_at: packed.dueAt ?? null,
-    proof_image_path: packed.proofPath ?? null,
-    verify_summary: packed.verify ?? null,
   };
 
   const { data, error } = await supabase
