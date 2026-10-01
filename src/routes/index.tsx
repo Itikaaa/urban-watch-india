@@ -215,6 +215,11 @@ function Home() {
   const placeRef = useRef<Place | null>(null);
   placeRef.current = place;
   const autoLock = useRef(false);
+  const pendingUpload = useRef<{
+    detection: Detection;
+    image: string | null;
+    source: "photo" | "video";
+  } | null>(null);
   const fileLiveRef = useRef<(detection: Detection, image: string | null) => Promise<void>>(
     async () => undefined,
   );
@@ -325,34 +330,97 @@ function Home() {
     });
   }
 
-  async function applyManualLocation(query: string, origin: string) {
-    if (!query.trim()) return;
+  async function applyManualLocation(query: string, origin: string): Promise<Place | null> {
+    if (!query.trim()) return null;
     try {
       const info = await geocodePlace({ data: { query } });
       if (!info) {
         toast.error(t("placeNotFound"));
-        return;
+        return null;
       }
-      setPlace({ ...info, origin });
+      const next: Place = { ...info, origin };
+      placeRef.current = next;
+      setPlace(next);
+      return next;
     } catch {
       toast.error(t("locationLookupFailed"));
+      return null;
     }
   }
 
+  function hasMapCoords(located: Place | null | undefined): located is Place & { lat: number; lng: number } {
+    return located != null && located.lat != null && located.lng != null;
+  }
+
+  async function locateForUpload(
+    detection: Detection,
+    prefer: Place | null,
+    guessOrigin: "originGuessedPhoto" | "originGuessedVideo",
+  ): Promise<Place | null> {
+    if (hasMapCoords(prefer)) {
+      placeRef.current = prefer;
+      setPlace(prefer);
+      return prefer;
+    }
+    if (hasMapCoords(placeRef.current)) return placeRef.current;
+    if (detection.locationGuess?.text) {
+      const guessed = await applyManualLocation(detection.locationGuess.text, guessOrigin);
+      if (hasMapCoords(guessed)) return guessed;
+    }
+    const live = await readCurrentLocation();
+    if (hasMapCoords(live)) return live;
+    return placeRef.current;
+  }
+
+  async function autoMapUpload(
+    detection: Detection,
+    image: string | null,
+    source: "photo" | "video",
+    prefer: Place | null,
+  ) {
+    if (!shouldAutoReport(detection.primaryType, detection.hazardDetected, detection.items)) {
+      if (!detection.hazardDetected && detection.items.length === 0) toast(t("nothingInFrame"));
+      return;
+    }
+    const located = await locateForUpload(
+      detection,
+      prefer,
+      source === "photo" ? "originGuessedPhoto" : "originGuessedVideo",
+    );
+    if (!hasMapCoords(located)) {
+      pendingUpload.current = { detection, image, source };
+      toast.error(t("addLocation"));
+      return;
+    }
+    pendingUpload.current = null;
+    setProgress(t("mappingUpload"));
+    await publishReport({
+      detection,
+      located,
+      image,
+      source,
+      note: "",
+      announce: true,
+      resetForm: false,
+    });
+  }
+
   async function onPhoto(file: File) {
+    pendingUpload.current = null;
     setDetection(null);
     const buffer = await file.arrayBuffer();
     const gps = readExifGps(buffer);
     const dataUrl = await shrinkImage(await fileToDataUrl(file));
     setPreview(dataUrl);
 
+    let photoPlace: Place | null = null;
     if (gps) {
       try {
         const info = await reverseGeocode({ data: { lat: gps.lat, lng: gps.lng } });
-        setPlace({ ...info, origin: "originPhotoGps" });
+        photoPlace = { ...info, origin: "originPhotoGps" };
         toast.success(t("locationReadGps"));
       } catch {
-        setPlace({
+        photoPlace = {
           lat: gps.lat,
           lng: gps.lng,
           address: `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`,
@@ -360,10 +428,13 @@ function Home() {
           city: null,
           state: null,
           origin: "originPhotoGps",
-        });
+        };
       }
+      placeRef.current = photoPlace;
+      setPlace(photoPlace);
     }
 
+    let imageForMap = dataUrl;
     let local = sightsToDetection([]);
     try {
       const img = new Image();
@@ -372,7 +443,10 @@ function Home() {
       local = await runStillDetections(async (detect) => {
         const found = detect(img);
         const marked = annotateSource(img, img.naturalWidth, img.naturalHeight, found);
-        if (marked) setPreview(marked);
+        if (marked) {
+          setPreview(marked);
+          imageForMap = marked;
+        }
         return sightsToDetection(found);
       });
     } catch {
@@ -382,12 +456,11 @@ function Home() {
     const result = await analyze(dataUrl);
     const merged = result ? combineDetection(local, result) : local;
     setDetection(merged);
-    if (!gps && merged.locationGuess?.text) {
-      await applyManualLocation(merged.locationGuess.text, "originGuessedPhoto");
-    }
+    await autoMapUpload(merged, imageForMap, "photo", photoPlace);
   }
 
   async function onVideo(file: File) {
+    pendingUpload.current = null;
     setDetection(null);
     setAnalyzing(true);
     setProgress(t("readingVideo"));
@@ -443,9 +516,7 @@ function Home() {
       const ai = await analyze(bestRaw);
       const merged = ai ? combineDetection(bestLocal, ai) : bestLocal;
       setDetection(merged);
-      if (merged.locationGuess?.text && !place) {
-        await applyManualLocation(merged.locationGuess.text, "originGuessedVideo");
-      }
+      await autoMapUpload(merged, bestMarked, "video", null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("videoFailed"));
     } finally {
@@ -545,7 +616,13 @@ function Home() {
         .single();
       if (error) throw error;
       noteRecentPin(input.located.lat, input.located.lng, input.detection.primaryType);
-      reportsRef.current = [data as (typeof reportsRef.current)[number], ...reportsRef.current];
+      const row = data as (typeof reportsRef.current)[number];
+      reportsRef.current = [row, ...reportsRef.current];
+      queryClient.setQueriesData({ queryKey: ["reports"] }, (old: typeof reports | undefined) => {
+        if (!old) return [row];
+        if (old.some((item) => item.id === row.id)) return old;
+        return [row, ...old];
+      });
 
       const roadHazard = ["pothole", "damaged_road", "open_manhole", "broken_footpath"].includes(
         input.detection.primaryType,
@@ -694,6 +771,21 @@ function Home() {
     }, 20000);
     return () => window.clearInterval(id);
   }, [cameraOn, tab]);
+
+  useEffect(() => {
+    const pending = pendingUpload.current;
+    if (!pending || place?.lat == null || place.lng == null) return;
+    pendingUpload.current = null;
+    void publishReport({
+      detection: pending.detection,
+      located: place,
+      image: pending.image,
+      source: pending.source,
+      note: "",
+      announce: true,
+      resetForm: false,
+    });
+  }, [place]);
 
   useEffect(() => {
     if (!loading && user && sessionRole() === "authority") {
@@ -855,6 +947,7 @@ function Home() {
                     accept="image/*"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
+                      e.target.value = "";
                       if (f) void onPhoto(f);
                     }}
                   />
@@ -866,17 +959,18 @@ function Home() {
                     accept="video/*"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
+                      e.target.value = "";
                       if (f) void onVideo(f);
                     }}
                   />
                 </TabsContent>
               </Tabs>
 
-              {analyzing && (
+              {analyzing || submitting ? (
                 <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" /> {progress || t("checking")}
                 </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
 
